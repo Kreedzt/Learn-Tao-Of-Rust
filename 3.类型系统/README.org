@@ -266,3 +266,536 @@
     这个缺点并不影响使用 Rust 编程. 但是需要明白单态化机制, 在平时的编程中注意二
     进制的大小, 如果变得太大, 可以根据具体的情况重构代码来解决问题.
     
+** 深入 trait
+   可以说 trait 是 Rust 的灵魂, Rust 中所有的抽象, eg: 接口抽象, OOP 范式抽象,
+   函数式范式抽象等, 均基于 trait 来完成. 同时, trait 也保证了这些抽象几乎都是运
+   行时 0 开销的.
+
+   从类型的角度来说, trait 是 Rust 对 Ad-hoc 多态的支持. 从语义上说, trait 是在
+   行为上对类型的约数. 这种约束可以让 trait 有如下 4 种用法:
+
+   - *接口抽象*: 接口是对类型行为的统一约束.
+   - *泛型约束*: 泛型的行为被 trait 限定在更有限的范围内
+   - *抽象类型*: 在运行时作为一种间接的抽象类型去使用, 动态地分发给具体的类型.
+   - *标签 trait*: 对类型约束, 可以直接作为一种 "标签" 使用.
+
+*** 接口抽象
+    trait 最基础的用法就是进行接口抽象, 它有如下特点:
+    - 接口中可以定义方法, 并支持默认实现
+    - 接口中不能实现另一个接口, 但是接口之间可以继承
+    - 同一个接口可以同时被多个类型实现, 但不能被同一个类型实现多次.
+    - 使用 impl 关键字为类型实现接口方法
+    - 使用 trait 关键字来定义接口
+
+    第 2 章的代码中定义的 Fly trait 就是一个典型的接口抽象. 类型 Duck 和 Pig 均
+    实现了该 trait, 但具体的行为各不相同. *这正是一种 Ad-hoc 多态*: 同一个
+    trait, 在不同的上下文中实现的行为不同. 为不同的类型实现 trait, 属于一种 *函
+    数重载*, 也可以说函数重载就是一种 Ad-hoc 多态.
+
+*** 关联类型
+    事实上, Rust 中的很多操作符都是基于 trait 来实现的. eg: 加法操作符就是一个
+    trait, 加法操作不仅可以针对整数, 浮点数, 也可以针对字符串.
+    
+    使用 trait 泛型来实现加法抽象, 看上去好像没什么问题, 但是仔细考虑后, 就会发
+    现它有一个很大的问题. 一般来说, 对于加法操作要考虑以下两种情况:
+
+    - 基本数据类型: eg: i32 和 i32 类型相加, 处于安全考虑, 结果必然还是 i32 类型
+    - 也可以对字符串进行加法操作, 但是 Rust 中可以动态增加长度的只有 ~String~ 类
+      型的字符串, 所以一般是 ~String~ 类型的才会实现 ~Add~, 其返回值也必须是
+      ~String~ 类型. 但是加法操作符右侧也可以是字符串字面量. 所以, 要面对这种情
+      况, ~String~ 的加法操作还比如实现 ~Add<&str, String>~.
+      
+    不管是以上两种情况的哪一种, ~Add~ 的第二个参数类型总数显得有点多余. 所以,
+    Rust 标准库中定义的 ~Add~ trait 使用了另外一种写法.
+
+    #+begin_src rust
+      pub trait Add<RHS = Self> {
+          type Output;
+          fn add(self, rhs: RHS) -> Self::Output;
+      }
+    #+end_src
+
+    标准库在 type 定义了 Output, 以这种方式定义的类型叫做 *关联类型*. 而
+    ~Add<RHS=Self>~ 这种形式表示为类型参数 ~RHS~ 指定了默认值 ~Self~. ~Self~ 是
+    每个 trait 都带有的 *隐式类型参数*, 代表实现当前 trait 的具体类型.
+
+    当代码中出现操作符 "+" 的时候, Rust 就会自动调用操作符左侧的 ~add()~ 方法,
+    去完成具体的加法操作, 也就是说 "+" 操作与调用 ~add()~ 方法是等价的
+    #+begin_example
+            1  +  2
+            LHS   RHS
+             1.add(2)
+    #+end_example
+
+    标准库中为 u32 类型实现 Add trait
+    #+begin_src rust
+      impl Add for $t {
+          type Output = $t;
+          fn add(self, other: $t) -> $t { self + other }
+      }
+    #+end_src
+
+    因为 Rust 源码为 u32 实现 ~Add~ trait 的操作符是用宏来完成的, 所以 出现了
+    ~$t~ 这样的符号, 第 12 章会降到关于宏的更多细节. 当前这里的 ~$t~ 可以看做
+    u32 类型.
+
+    #+begin_src rust
+      impl Add for u32 {
+          type Output = u32;
+          fn add(self, other: u32) -> u32 { self + other }
+      }
+    #+end_src
+
+    标准库中为 ~String~ 类型实现 ~Add~ trait
+    #+begin_src rust
+      impl Add<&str> for String {
+          type Output = String;
+          fn add(mut self, other: &str) -> String {
+              self.push(other);
+              self
+          }
+      }
+    #+end_src
+
+    ~impl Add<&str>~ 指明了泛型类型为 ~&str~, 并没有使用 ~Self~ 默认类型参数, 这
+    表明对于 ~String~ 类型字符串来说, 加号右侧的值类似 ~&str~ 类型, 而非
+    ~String~ 类型. 关联类型 ~Output~ 指定为 ~String~ 类型, 意味着加法返回的是
+    ~String~ 类型.
+
+    综上所述, 使用关联类型能够使代码更加精简, 同时也对方法的输入和输出尽量很好的
+    隔离, 使得代码的可读性大大增强.
+
+    在语义层面上, *使用关联类型也增强了 trait 表示行为的这种语义*, 因为它表示了
+    和某个行为(trait)相关联的类型. 在工程上, 也体现出了高内聚的特点.
+
+*** trait 一致性
+    既然 ~Add~ 是 trait, 那么就可以通过 ~impl Add~ 的功能来实现操作符重载的功能.
+    在 Rust 中, 通过上面对 ~Add~ trait 的分析就可以知道, u32 和 u64 类型是不能直
+    接相加的.
+
+    Rust 遵循一条重要的规则: *孤儿规则(Orphan Rule)*. 
+    孤儿规则规定: *如果要实现每个 trait, 那么该 trait 和要实现该 trait 的那个类
+    型至少有一个要在当前 crate 中定义*. 如果没有孤儿规则的限制, 标准库中 u32 类
+    型的加法行为就会被破坏性地改写, 导致所有使用 u32 类型的 crate 可能产生难以预
+    料的 Bug.
+
+    除了在本地定义 ~Add~ trait方法, 还可以在本地创建一个新的类型, 然后为此新类型
+    实现 ~Add~, 这同样不会违反孤儿原则.
+
+    注意: *关联类型 Output 必须指定具体类型*.
+
+*** trait 继承
+    Rust 不支持传统面向的集成, 但是 *支持 trait继承*. 子 trait 可以继承父 trait
+    中定义或实现的方法. 在日常编程中, trait 中定义的一些行为可能会有重复的情况,
+    使用 trait 继承可以简化编程, 方便组合, 让代码更加优美.
+    
+*** 泛型约束
+    使用泛型编程时, 很多情况下的行为 *并不是针对所有类型都实现* 的.
+
+**** trait 限定
+     可以使用 ~<T: Add<T, Output=T>>~ 语法进行约束.
+
+     使用 *trait* 对泛型进行约束, 叫做 *trait 限定(trait Bound)*.
+     格式:
+     #+begin_src rust
+       fn generic<T: MyTrait + MyOtherTrait + SomeStandardTrait>(t: T) {}
+     #+end_src
+     表明: 该类型 T, 必须同时实现 3 个 trait 定义的全部方法, 才能使用该泛型函数
+
+**** 理解 trait 限定
+     trait 限定的思想与 Java 中的泛型限定, Ruby 和 Python 中的 *Duck Typing*,
+     Golang 中的 *Structural Typing*, Elixir 和 Clojure 中的 *Protocol* 都很相似.
+     所以有编写这些编程语言经验的开发者看到 trait 限定会觉得很熟悉. 在类型理论中,
+     Structural Typing 是一种根据结构来判断类型是否等价的理论, 翻译过来为结构化
+     类型. Duck Typing, Protocol 都是 Structural Typing 的变种, 一般用于动态语言,
+     在运行时检测类型是否等价. Rust 中的 trait 限定也是 Structural Typing 的一种
+     实现, 可以看做一种 *静态 Duck Typing*.
+
+     从 *数学角度* 来理解 trait 限定可能更加直观. *类型可以看做具有相同属性值的
+     集合*. 当生命变量 ~let x: u32~ 时, 意味着 x∈u32.
+
+     现观察如下 trait 声明:
+     #+begin_src rust
+       trait Paginate: Page + PerPage
+     #+end_src
+     
+     *trait 也是一种类型, 是一种方法集合, 或者说, 是一种行为的集合*.
+     以上 trait 的声明意味着: Paginate ⊂ (Page ∩ Perpage), Paginate 是 Page 和
+     Perpage 交集的子集.
+
+     所以如下写法:
+     #+begin_src rust
+       impl<T: A + B> C for T
+     #+end_src
+
+     可以解释为 "为所有 T ⊂ (A ∩ B) 实现 trait C".
+
+     *Rust 编程的哲学是组合优于继承*, Rust 并不提供类型层面上的继承, Rust 中所有
+     的类型都是独立存在的, 所以 Rust 中的类型可以看做语言允许的最小集合, 不能再
+     包含其他子集. 而 trait 限定 可以对这些类型集合进行组合, 也就是求交集.
+
+     总的来说, trait 限定给予了开发者更大的自由度, 因为不再需要类型间的继承, 也
+     简化了编译器的检查操作. 包含 trait 限定的泛型属于静态分发, 在编译期通过单态
+     化分别生成具体类型的实例, 所以调用 trait 限定中的方法也都是运行时 0 成本的,
+     因为不需要在运行时再进行方法查找.
+
+     #+begin_src rust
+       fn foo<T: A, K: B + C, R: D>(a: T, b: K, C: R) { /* */ }
+     #+end_src
+
+     Rust 提供了 *where* 关键字用来简化此情况:
+     #+begin_src rust
+       fn foo<T, K, R>(a: T, b: K, c: R) where T: A, K: B + C, R: D {}
+     #+end_src
+     
+*** 抽象类型
+    trait 还可以用作 *抽象类型(Abstract Type)*. 抽象类型属于类型系统的一种, 也叫
+    做 *存在类型(Existential Type)*. 相对于具体类型而言, 抽象类型无法直接实例化,
+    它的每个实例都是具体类型的实例.
+
+    对于抽象类型而言, 编译器可能无法确定其确切的功能和所占的空间大小. 所以 Rust
+    目前有 2 种方法来处理抽象类型: *trait 对象* 和 *impl trait*.
+
+**** trait 对象
+     在泛型中使用 trait 限定, 可以将 *任意类型的范围根据类型的行为限定到更精确可
+     控的范围内*. 从这个角度出发, 也可以将共同有用相同行为的类型集合抽象为一个类
+     型, 这就是 trait *对象(trait Object)*. "对象" 这个词来自于卖弄项对象编程语
+     言, 因为 trait 对象是对具有相同行为的一组具体类型的抽象, 等价于面向对象中一
+     个封装了行为的对象, 所以称其为 trait 对象.
+
+     静态分发与动态分发的工作机制:
+     trait 本身也是一种类型, 但它的类型大小 *在编译期是无法确定* 的, 所以 trait
+     对象 *必须使用指针*. 可以利用引用操作符 ~&~ 或 ~Box<T>~ 来制造一个 trait 对
+     象. trait 对象等价于如下结构体:
+     #+begin_src rust
+       pub struct TraitObject {
+           pub data: &mut(),
+           pub vtable: *mut(),
+       }
+     #+end_src
+
+     该 Object 来自 Rust 标准库, 但它 *并不代表真正的 trait 对象*, 仅仅用于操作
+     底层的一些 Unsafe 代码. 这里使用结构体只是为了用它来帮助理解 trait 对象的行
+     为.
+
+     *TraitObject* 包含 2 个指针: *data 指针* 和 *vtable 指针*. 以 ~impl MyTrait
+     for T~ 为例, data 指针指向 trait 对象保存的类型数据 T, vtable 指针指向包含
+     为 T 实现的 MyTrait 的 Vtable(Virtual Table), 该名称来源于 C++, 所以可以称
+     之为 *虚表*. 虚表的本质是一个结构体, 包含了析构函数, 大小, 对齐和方法等信息.
+
+     结构如下图:
+     #+begin_example
+                         TraitObject
+       栈:                *         *
+                         /           \
+       堆:               T    '       '    '    '
+                              析构函数 大小 对齐 方法
+                        data        vtable
+     #+end_example
+
+     在编译期, 编译器 *只知道 TraitObject 包含指针的信息*, 并且指针的大小也是确
+     定的, *并不知道要调用哪个方法*. 在运行期, 当有 ~trait_object.method()~ 方法
+     被调用时, *TraitObject 会根据虚表指针中从虚表查出正确的指针*, 然后再进行动
+     态调用. 这也是将 trait 对象成为动态分发的原因.
+
+     所以 ~dynamic_dispatch(&foo)~ 函数在运行期被调用时, 会先去查虚表, 取出相应
+     的方法 ~t.baz()~, 然后调用.
+
+     *并不是每个 trait 都可以作为 trait 对象被使用*, 这依旧和类型大小是否确定有
+     关系. 每个 trait 都包含一个隐式的类型参数 Self, 代表实现该 trait 的类型.
+     Self 默认有一个隐式的 trait 限定 ~? Sized~, 形如 ~<Self: ? Sized>~,
+     ~? Sized trait~ 包括了所有的动态大小类型和所有可确定大小的类型. Rust 中大部
+     分类型都默认是可确定大小的类型, 也就是 ~<T: Sized>~, 这也是泛型代码可以正常
+     编译的原因.
+
+     当 trait 对象在运行期进行动态分发时, 也必须确定大小, 否则无法为其正确分配内
+     存空间, 所以必须同时满足以下 2 条规则的 trait 才可以作为 trait 对象使用.
+
+     - trait 的 Self 类型参数不能被限定为 Sized.
+     - trait 中所有的方法都必须是对象安全的.
+
+     满足这两条规则的 trait 就是对象安全的 trait.
+
+     trait 的 Self 类型参数绝大部分情况默认是 *? Sized*, 但也有可能出现被限定为
+     Sized 的情况.
+     
+     标记为 Sized 的情况:
+     #+begin_src rust
+       trait Foo: Sized {
+           fn some_method(&self);
+       }
+     #+end_src
+
+     Foo 继承自 Sized, 表明: 要为某类型实现 Foo, 必须先实现 Sized. 所以, Foo 中
+     的隐式 Self 也必然是 Sized 的, 因为 Self 代表的是那些要实现 Foo 的类型.
+
+     按规则一, Foo *不是对象安全的*. trait 对象本身是动态犯法的, 编译期根本无法
+     确定 Self 具体是哪个类型, 因为不知道给哪些类型实现过该 trait, 更无法确定大
+     小, 现在又要求 Self 是可确定大小的, 这样造就了 *薛定谔的类型*: 即能确定大小
+     又不确定大小.
+
+     *警告*: 以下内容更新: 见此 [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/137][issue]]
+     
+     当把 trait 当做对象使用时, 其内部类型就默认为 Unsized 类型, 只是将其置于编
+     译期可确定大小的胖指针背后, 以供运行时动态调用. 对象安全的本质就是为了让
+     trait 对象可以安全地调用相应的方法. 如果没有 Sized 的限定, 就很容易写出无用
+     的类型. eg: Box, 虽然会通过编译, 但是不能用它做任何事情. 对于更复杂的
+     trait, 往往就没有这么明显了, 只有在做了大量繁重的工作之后可能会突然发现某个
+     trait 对象无法正常调用方法.
+
+     trait 对象, 在 *运行时已经查出了具体类型信息*, 要通过虚表调用相应的方法. 不
+     像静态分发那样, trait 对象不是为每个类型都实现 trait 的方法.
+     所以, *为 trait 增加 Sized 限定, 然后编译器自动为该 trait 实现自身*, 就可以
+     在编译期准确排出无效的 trait 对象. 这就是对象安全.
+
+     需要注意的是: 对象安全和内存安全并无直接的关联, 它指示保证 trait 对象在运行
+     时可以安全准确地调用相关的方法.
+
+     trait 对象在内部也维护 2 个表: safe_vtable 和 nonself_vtable. 
+     标记有 ~where Self: Sized~ 的会被归类到 nonself_vtable, 也就是说, 不会被
+     trait 对象调用. 所以反过来, 当不希望 trait 作为 trait 对象时, 可以使用
+     ~Self:Sized~ 进行限定.
+
+     *对象安全的方法必须满足以下三点之一*: (注意是 *之一*, 不是 *全部*)
+     - 方法受 *Self: Sized* 约束
+     - 方法签名同时满足以下三点
+       + 必须不包含任何泛型参数. 如果包含泛型, *trait* 对象在 *虚表(Vtable)* 中
+         查找方法时将不确定该调用哪个方法.
+       + *第一个参数必须为 Self 类型或可以解引用为 Self 的类型* (也就是说, 必须
+         有接收者, eg: ~self~, ~&self~, ~&mut self~ 和 ~self: Box<Self>~, 没有接
+         收者的方法对 trait 对象毫无意义).
+       + Self 不能出现在除第一个参数之外的地方, *包括返回值中*.
+         这是因为如果出现 Self, 那就意味着 ~Self~ 和 ~self~, ~&self~ 或 ~&mut
+         self~ 的类型相匹配.
+         btw: 返回值的 Self 受 ~Self: Sized~ 限定, 因为满足方法受 *Self:
+         Sized* 约束(也就是第一条)
+
+       这三点可以总结为一句话: *没有额外 Self 类型参数的非泛型成员方法*.
+
+     - trait 不能包含关联常量(Associated Constant).在 Rust 2018 版本中, trait 中
+       可以增加默认的关联常量, 其定义方法和关联类型差不多, 只不过需要使用
+       ~const~ 关键字.
+
+       
+     在 Rust 2018 版本中, 引入了可以 *静态分发的抽象类型 impl Trait*. 如果说
+     *trait 对象* 是 *装箱抽象类型(Boxed Abstract Type)* 的话, 那么 impl Trait
+     就是 *拆箱抽象类型(Unboxed Abstract Type)*. "装箱" 和 "拆箱" 是业界的抽象俗
+     语, 其中 "装箱" 代表将值托管到堆内存, 而 "拆箱" 则是在栈内存中生成新的值,
+     更详细的内存会在第 4 章描述. 总之: 装箱抽象类型代表动态分发, 拆箱抽象类型代
+     表静态分发.
+
+     *目前 impl trait 只可以在输入的参数和返回值两个位置使用*. 在不远的将来, 还
+     会扩展到其他位置, eg: let 定义, 关联类型等.
+
+     将 impl Trait 语法用于参数位置的时候, 等价于使用 trait 限定的泛型.
+
+     将 impl Trait 语法用于返回值位置的时候, *实际上等价于给返回类型增加了一种
+     trait 限定范围*. 
+
+     相比于使用 trait 对象, 使用 impl Trait 会拥有更高的性能.
+
+     *警告*: 此处有更新, 见 [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/269][issue]]
+     即便使用相同的 Trait 签名, 编译器 *也不会认为是相同类型*.
+
+     在 Rust 2018 中, 为了在语义上和 impl Trait 语法相对应, 专门为动态分发的
+     *trait 对象* 增加了新的语法 *dyn Trait*, 其中 dync 是 Dynamic(动态) 的缩写.
+     即, impl Trait 意味着静态分发, dyn Trait 代表动态分发.
+     
+*** 标签 trait
+    trait 这种对行为约束的特性也非常适合作为 *类型的标签*. 可以起到标识的作用.
+
+    Rust 一共提供了 5 个重要标签的标签 trait, 都被定义在标准库 ~std::marker~ 模
+    块中. 分别如下:
+
+    - *Sized* trait, 用来标识编译期可确定大小的类型
+    - *Unsize* trait: 目前该 trait 为实验特性, 用于标识动态大小类型(DST).
+    - *Copy* trait: 用来标识可以按位复制其值的类型.
+    - *Send* trait: 用来标识可以跨线程安全通信的类型.
+    - *Sync* trait: 用来标识可以在线程间安全共享引用的类型.
+
+**** Sized trait
+     Sized trait 非常重要, *编译器用它来识别可以在编译期确定大小的类型*.
+
+     #+begin_src rust
+       #[lang = "sized"]
+       pub trait Sized {
+           // 代码为空, 无具体实现方法
+       }
+     #+end_src
+
+     Sized trait 是一个 *空 trait*, 因为仅仅作为标签 trait *供编译器使用*. 这里
+     真正起 "打标签" 作用的是第一行的属性 ~#[lang="sized"]~, 该属性 lang 表示
+     Sized trait 供 Rust 语言本身使用, 声明为 "sized", 称为 *语言项(Lang Item)*,
+     这样编译器就知道 Sized trait 如何定义了. 还有一个相似的例子是加号操作, 当 2
+     个整数相加的时候, eg: ~a+b~, 编译器就回去找 ~Add:add(a,b)~, 这也是因为加号
+     操作是语言项 ~#[lang="add"]~.
+
+     Rust 语言中大部分类型都是 *默认 Sized 的*, 所以在写泛型结构体的时候, 没有显
+     式地加上 Sized trait 限定. 如下:
+     #+begin_src rust
+       struct Foo<T>(T);
+       struct Bar<T: ?Sized>(T);
+     #+end_src
+
+     此处 ~Foo~ 等价于 ~Foo<T: Sized>~, 如果需要在结构体中使用动态大小类型, 则需
+     要改为 ~<T: ?Sized>~ 限定.
+
+     ~? Sized~ 是 ~Sized trait~ 的另一种语法. 
+     #+begin_example
+                                 编译器 
+                                 /     \
+                              T:Unsize  T:Sized
+                              不可确定大小  可确定大小
+                                 \     /
+                                  T:?Sized
+     #+end_example
+
+     目前 Rust 中的动态类型有 trait 和 [T], 其中 [T] 代表一定数量的 T 在内存中依
+     次排列, 但不知道具体的数量, 所以它的大小是位置的, 用 Unsized 来标记. eg:
+     str 字符串和定长数组 [T;N]. [T] 其实是 [T;N] 的特例, 当 N 的大小未知时就是
+     [T].
+
+     而 ~? Sized~ 标识的类型包含了 Sized 和 Unsize 所表示的两种类型. 所以形如
+     ~Bar<T:?Sized>~ 的声明支持编译器可确定大小类型和动态大小类型两种类型.
+
+     但是动态大小类型如要遵循如下三条规则:
+
+     - 只可以通过胖指针来操作 Unsize 类型, eg: ~&[T]~ 或 ~&Trait~.
+     - 变量, 参数和枚举变量类型 *不能使用动态大小类型*.
+     - 结构体中只有最后一个字段可以使用动态大小类型, 其他字段不可以使用.
+
+**** Copy trait
+     Copy trait 用来标记可以按位复制的类型, 按位复制等价于 C 语言中的 memcpy.
+
+     以下内容更新自: [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/62][issue]]
+     *Tip*: memcpy 只是复制一段内存, 可以从栈到栈, 栈到堆, 堆到栈. 只需要传入源
+     地址和目标地址, 就可复制地址指向内存中的一段数据, 至于这段数据的含义是地址
+     还是什么, memcpy 并不管
+
+     地址本身决定了是栈还是堆, 因为本身都是虚拟空间地址.
+
+     Copy trait 的内部实现:
+     #+begin_src rust
+       #[lang="copy"]
+       pub trait Copy:Clone {
+           // 代码为空, 无具体实现方法
+       }
+     #+end_src
+
+     以上代码的 lang 属性中, 此时声明为 "copy". 此 Copy trait 继承自 Clone
+     trait, 意味着, 要实现 Copy trait 的类型, 必须实现 Clone trait 中定义的方法.
+
+     定义于 ~std::clone~ 模块中的 Clone trait 的内部实现:
+     #+begin_src rust
+       pub trait Clone: Sized {
+           fn clone(&self) -> Self;
+
+           fn clone_from(&mut self, source: &Self) {
+               &self = source.clone()
+           }
+       }
+     #+end_src
+
+     Clone trait 继承自 Sized, 意味着要实现 Clone trait 的对象必须是 Sized 类型.
+     默认实现是调用的 ~clone()~ 方法, 所以对于要实现 Clone trait 的对象, 只需实
+     现 ~clone()~ 方法即可.
+
+     如果想让一个类型实现 Copy trait, 就必须同时实现 Clone trait.
+
+     可以通过 derive 属性实现: ~#[derive(Copy, Clone)]~.
+
+     Rust 为很多基础数据类型都实现了 Copy trait, eg: 常用的数字类型, 字符(Char),
+     布尔类型, 单元值, 不可变引用等.
+     
+     可以利用 Copy trait 限定的泛型来检测数据结构是否实现了 Copy trait 类型.
+
+     空 Copy trait 的意义: Copy 是一个标签 trait, 编译器做类型检查时会检测类型所
+     带的标签, 以验证它是否 "合格". *Copy 的行为是一个隐式的行为, 开发者不能重载
+     Copy 行为, 它永远都是一个简单的位复制*. Copy 隐式行为发生在执行变量绑定, 函
+     数参数传递, 函数返回等场景中, 因为这些场景是开发者无法控制的, 所以需要编译
+     器来保证. 在第 4 章中, 会对 Copy 语义有更深的了解.
+
+     Clone trait 是一个显式的行为, 任何类型都可以实现 Clone trait, 开发者可以自
+     由地按需实现 Copy 行为. eg: String 类型并没有实现 Copy trait, 但是它实现了
+     Clone trait, 如果代码有需要, 只需要调用 String 类型的 clone 方法即可.
+
+     *注意*: 如果一个类型是 Copy 的, 它的 clone 方法仅仅需要返回 ~*self~ 即可.
+
+     *并非所有类型都可以实现 Copy trait*. 对于自定义类型来说, *必须让所有的成员
+     都实现了 Copy trait, 这个类型才有资格实现 Copy trait*. 如果是数组类型, 其内
+     部元素都是 Copy 类型, *则数组本身就是 Copy 类型*; 如果是元组类型, 且其内部
+     元素都是 Copy 类型, 则该 *元组会自动实现 Copy*; 如果是结构体或枚举类型, 只
+     有当每个内部成员都实现 Copy 时, 它才可以实现 Copy, 并不会像元组那样自动实现
+     Copy.
+
+**** Send trait 和 Sync trait
+     Rust 作为现代编程语言, 自然也提供了语言级的并发支持. 只不过 Rust 对并发的支
+     持和其他语言有所不同. Rust 在标准库中提供了很多并发相关的基础设施, eg: 线程,
+     Channel, 锁和 Arc 等, 这些都是独立于语言核心之外的库, 意味着基于 Rust 的并
+     发方案不受标准库和语言的限制, 开发人员可以编写自己所需的并发模型.
+
+     一直以来, 多线程并发编程都存在很大问题, 因为它会增加复杂性, 想要编写正确非
+     常困难, 调试也非常困难, 难以将问题复现. 线程不安的代码胡因为共享内存而产生
+     内存破坏(Memory Corruption) 行为.
+
+     多线程之所以有这么严重的问题, 是因为系统级的线程是不可控的, 编写好的代码不
+     一定会按照的顺序执行, 会带来 *竞态条件(Race Condition)*. 不同的线程同时访问
+     一块共享变量也会造成 *数据竞争(Data Race)*. *竞态条件是不可能被消除的, 数据
+     竞争是有可能被消除的, 而数据竞争是线程安全最大的 "隐患"*. 很多其他语言通过
+     各种成熟的并发解决方案来支持并发编程, eg: Erlang 提供轻量级进程和 Actor 并
+     发模型; Golang 提供了协程和 CSP 并发模型. 而 Rust 则从正面解决了这个问题,
+     它的 "秘密武器" 是类型系统和所有权机制.
+
+     Rust 提供了 *Send* 和 *Sync* 两个 trait, 它们是 Rust 无数据竞争并发的基石.
+
+     - 实现了 Send 的类型, 可以安全地在线程间传递值, 也就是说可以跨线程传递所有
+       权.
+     - 实现了 Sync 的类型, 可以跨线程安全地传递共享(不可变)引用.
+
+     有了这 2 个标签 trait, 就可以把 Rust 中所有的类型归为 2 类: *可以安全跨线程
+     传递的值和引用*, 以及 *不可以跨线程传递的值和引用*. 再配合所有权机制, 带来
+     的效果就是: Rust *能够在编译期就检查出数据竞争的隐患*, 而不需要等到运行时再
+     排查.
+
+     多线程共享的数据类型 *必须实现了 Send 和 Sync triat*, 否则因为没有做线程同
+     步处理, 编译器会报错(必然不是线程安全的).
+
+     Send 和 Sync 标签 trait 与 Copy, Sized 一样, 内部也没有具体的方法实现. 仅仅
+     是标记, 可以安全地跨线程传递和访问的类型用 Send 和 Sync标记, 否则用 ~!Send~
+     和 ~!Sync~ 标记.
+
+     Send 和 Sync 的内部实现
+     #+begin_src rust
+       #[lang = "send"]
+       pub unsafe trait Send {
+           // 代码为空, 无具体实现方法
+       }
+
+       // ...
+
+       #[lang = "sync"]
+       pub unsafe trait Sync {
+           // 代码为空, 无具体实现方法
+       }
+     #+end_src
+     
+     Rust 为所有类型实现 Send 和 Sync:
+     #+begin_src rust
+       // 特殊语法: for..
+       unsafe impl Send for .. {}
+       impl<T: ?Sized> !Send for *const T {}
+       impl<T: ?Sized> !Send for *mut T {}
+     #+end_src
+
+     特殊语法: ~for ..~: 表示为所有类型实现 Send, Sync 也同理. 同时, 第二行和第
+     三行也对 2 个原生指针实现了 ~!Send~, 代表它们不是线程安全的类型, 将它们排除
+     出去.
+
+     对于自定义的数据类型, 如果其成员类型必须全部实现 Send 和 Sync, 此类型才会被
+     自动实现 Send 和 Sync. Rust 也提供了类似 Copy 和 Clone 那样的 derive 属性来
+     自动导入 Send 和 Sync 的实现, 但是 *并不建议开发者使用该属性*, 因为它可能引
+     起编译器检查不到的线程安全问题.
+
+     总的来说, Rust 拼接 Send, Sync 和所有权机制, 在编译期就可以检测出线程安全的
+     问题, 保证了无数据竞争的并发安全, 让开发者可以 "无恐惧" 地编写多线程并发代
+     码, 并且可以让开发者自由使用各种并发模型.
