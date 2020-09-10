@@ -1,13 +1,13 @@
 
 // never 类型示例
 // 仅 Nightly 可用
-// #![feature(never_type)]
-// fn foo() -> u32 {
-//     let x: ! = {
-//         // 绑定 x 永远都不会被赋值, 因为 return 直接函数返回
-//         return 123
-//     };
-// }
+#![feature(never_type)]
+fn foo() -> u32 {
+    let x: ! = {
+        // 绑定 x 永远都不会被赋值, 因为 return 直接函数返回
+        return 123
+    };
+}
 
 fn main() {
     let x = true;

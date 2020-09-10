@@ -1,0 +1,5 @@
+* TAO Rust 学习记录
+** 准备
+   部分代码使用了 ~#![feature(xxx)]~ 试验性特性, 使用时需要声明在文件头部, 且需
+   要使用 nightly 的 rustup toolchain 才可以编译.
+

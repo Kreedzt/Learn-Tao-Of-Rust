@@ -953,3 +953,118 @@
     变引用和可变引用. AsRef 和标准库的另外一个 *Borrow* trait 功能有些类似, 但是
     AsRef 比较轻量级, 它只是简单地将值转换为引用, 而 Borrow trait 可以用来将某个
     复合类型抽象为拥有借用语义的类型. 更详细的内存请参考标准库文档.
+
+** 当前 trait 系统的不足
+   虽然当前的 trait 系统很强大, 但依然有很多需要改进的地方, 主要包括以下三点:
+   - 孤儿规则的局限性
+   - 代码复用的效率不高
+   - 抽象表达能力有待改进 
+
+*** 孤儿规则的局限性
+    孤儿规则虽然一定成都市保持了 trait 的一致性, 但是它还有一些局限性.
+
+    在设计 trait 时, 还需要考虑是否会影响下游的使用者. 
+    eg: 在标准库实现一些 trait 时, 还需要考虑是否需要为所有的 T 或 ~&'a T~ 实现
+    该 trait.
+    
+    为所有的 T 或 ~&'a T~ 实现 Bar trait
+    #+begin_src rust
+      impl<T:Foo> Bar for T { }
+      impl<'a, T:Bar> Bar for &'a T {}
+    #+end_src
+    
+    对于下游的 crate 来说, 如果想要避免孤儿规则的影响, 还必须使用 NewType 模式或
+    者其他方式将远程类型包装为本地类型, 这就带来了很多不便.
+
+    另外, 对于一些本地类型, 如果将其放到一些容器中, eg: ~Rc<T>~ 或 ~Option<T>~,
+    那么这些本地类型就会变成远程类型, 因为这些容器类型都是在标准库中定义的, 而非
+    本地.
+
+    ~Box<T>~ 脱离孤儿规则限制, 存在 ~#[fundamental]~ 属性标识. 实现源码如下:
+    #+begin_src rust
+      #[fundamental]
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub struct Box<T: ?Sized>(Unique<T>);
+    #+end_src
+    该属性就是告诉编译器, ~Box<T>~ 享有 "特权", 不必遵循孤儿规则.
+
+    除了 ~Box<T>~, ~Fn~, ~FnMut~, ~FnOnce~ 和 ~Sized~ 等都加上了
+    ~#[fundamental]~ 属性, 代表这些 trait 也同样不受孤儿规则的限制.
+    
+*** 代码复用的效率不高
+    除了孤儿规则, Rust 其实还遵循另外一条规则: *重叠(Overlap)规则*. 该规则规定了
+    不能为重叠的类型实现同一个 trait.
+
+    #+begin_src rust
+      impl<T> AnyTrait for T {}
+      impl<T> AnyTrait for T where T:Copy {}
+      impl<T> AnyTrait for i32 {}
+    #+end_src
+
+    以上代码中:
+    - T 是泛型, 指代所有的类型
+    - T where T: Copy 是受 trait 限定约束的泛型 T, 指代实现了 Copy 的一部分 T,
+      是所有类型的子集
+    - i32 是一个具体的类型
+
+    显而易见, 上面三种类型发生了 *重叠*. T 包含了 ~T: Copy~, 而 ~T: Copy~ 包含了
+    ~i32~. 这违反了重叠规则, 所以编译会失败. 这种实现 trait 的方式在 Rust 中叫
+    *覆盖式实现(Blanket impl)*.
+
+    重叠规则和孤儿规则一样, 都是为了保证 trait 一致性, 避免发生混乱, 但是也带来
+    了一些问题, 主要包括以下两个方面:
+
+    - 性能问题
+    - 代码很难复用
+
+    为所有类型 T 实现 AddAssign:
+    #+begin_src rust
+      impl<R, T: Add<R> + Clone> AddAssign<R> for T {
+          fn add_assign(&mut self, rhs: R) {
+              let tmp = self.clone() + rhs;
+              *self = tmp;
+          }
+      }
+    #+end_src
+    
+    以上代码中, 为所有类型 T 实现了 AddAssign, 该 trait 定义的 add_assign 方法是
+    += 赋值操作对应的方法. 这样实现虽然好, 但是会带来性能问题, 因为会 *强制所有
+    类型* 都使用 clone 方法, 该方法会有一定的成本开销, 但实际上有的类型并不需要
+    clone. 因为有重叠规则的限制, 不能为某些不需要 clone 的具体类型重新实现
+    add_assign 方法. 所以在标准库中, 为了实现更好的性能, 只好为每个具体的类型都
+    各自实现了一遍 AddAssign.
+
+    以上代码中, *重叠规则严重影响了代码的复用*. 如果没有此规则, 可以默认使用上面
+    对泛型 T 的实现, 然后对不需要 clone 的类型重新实现 AddAssign, 那么就完全没必
+    要为每个具体类型都实现一遍 add_assign 方法, 可以省掉很多重复代码. 当然, 此处
+    只是为了说明重叠规则的问题, 实际上在标准库中会使用宏来简化具体的实现代码.
+
+    那么为了缓解重复规则带来的问题, Rust 引入了 *特化(Specialization)*. 特化功能
+    暂时只能用于 impl 实现, 所以也称为 *impl 特化*. 不过该功能目前还未文档发布,
+    只能在 Nightly 版本的 Rust 之下使用 ~#![feature(specialization)]~ 特性.
+    
+    此处示例代码有改动, 见 [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/260][issue]]
+
+    特化功能有点类似面向对象语言中的继承, ~Diver::<String>~ "继承" 了
+    ~Diver::<T>~ 中的实现. 而 ~Diver::<&' static str>~ 则使用了本身的 swim 方法
+    实现. 
+    
+*** 抽象表达能力有待改进
+    迭代器在 Rust 中应用广泛, 但是它目前有一个 *缺陷*:
+    *在迭代元素的时候, 只能按值迭代*, 有时必须重新分配数据, 而 *不能通过引用来复
+    用原始的数据*. eg: ~std::io:Lines~ 类型用于按行读取文件数据, 但是该迭代器只
+    能读取一行数据分配一个新的 ~String~, 而 *不能重用缓冲区*. 这样就影响了性能.
+    这里提到的迭代器相关内容会砸第 6 章进行介绍.
+
+    这是因为迭代器的实现基于关联类型, 而管理那类型目前只能支持具体的类型, 而 *不
+    能支持泛型*. 导致无法支持引用类型, 因为 Rust 里规定使用引用类型必须标明生命
+    周期参数, 而此恰恰是一种泛型类型参数.
+
+    为了解决这个问题, 就必须允许迭代器支持引用类型. 只有支持引用类型, 才可以重用
+    内部缓冲区, 而不需要重新分配新的内存. 所以, 就必须实现一种更高级别的类型多态
+    性, 即 *泛型关联类型(Generic Associated Type, GAT)*.
+
+    ~Item<'a>~ 是一种类型构造器, 只有在为其制定具体的类型之后才算一个真正的类型,
+    所以 *GAT* 也被称为 *ACT(Associated type constructor)*, 即 *关联类型构造器*.
+
+    目前 GAT 依旧是试验性特性(需要 ~#![feature(generic_associated_types)]~ 才能使用)
