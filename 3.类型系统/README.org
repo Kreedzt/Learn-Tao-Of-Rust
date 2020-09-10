@@ -799,3 +799,157 @@
      总的来说, Rust 拼接 Send, Sync 和所有权机制, 在编译期就可以检测出线程安全的
      问题, 保证了无数据竞争的并发安全, 让开发者可以 "无恐惧" 地编写多线程并发代
      码, 并且可以让开发者自由使用各种并发模型.
+
+** 类型转换
+   在编程语言中, 类型转换分为 *隐式类型转换(Implicit Type Conversion)* 和 *显示
+   类型转换(Explicit Type Conversion)*. 隐式类型转换是由编译器或解释器来完成的,
+   开发者并未参与, 所以又称之为 *强制类型转换(Type Coercion)*. 显式类型转换是由
+   开发者指定的, 就是一般意义上的 *类型转换(Type Cast)*.
+
+   不当的类型转换会带来内存安全问题. eg: C 语言和 JavaScript 语言中的隐式类型转
+   换, 如果不多加注意, 可能会得到意料之外的结果. eg2: C 语言不通大小类型相互转换,
+   长类型转换为短类型会造成溢出等问题. 反观 Rust 语言, 只要不乱用 unsafe 块来跳
+   过编译器检查, 就不会因为类型转换出现安全问题.
+
+*** Deref 解引用
+    Rust 中的隐式类型转换基本上只有 *自动解引用*. 自动解引用的目的主要是方便开发
+    者使用智能指针. Rust 中提供的 ~Box<T>~, ~Rc<T>~ 和 ~String~ 等类型, 实际上是
+    一种 *智能指针*. 它们的行为就像指针一样, 可以通过 "解引用" 操作符进行解引用,
+    来获取其内部的值进行操作. 第 4 章会介绍关于智能指针的更多细节.
+
+**** 自动解引用
+     自动解引用虽然是编译器来做的, 但是 *自动解引用的行为可以由开发者来定义*.
+
+     一般来说, 引用使用 ~&~ 操作符, 而解引用使用 ~*~ 操作符, 通过实现 Deref
+     trait 来自定义解引用操作. Deref 有一个特性是强制类型转换, 规则是这样的: 
+     *如果一个类型 T 实现了 ~Deref<Target=U>~, 则该类型 T 的引用(或智能指针) 在
+     应用的时候会被自动转换为类型 U* 
+     
+     Deref trait 内部实现:
+     #+begin_src rust
+       pub trait Deref {
+           type Target: ?Sized;
+           fn deref(&self) -> &Self::Target;
+       }
+
+       pub trait DerefMut: Deref {
+           fn deref_mut(&mut self) -> &mut Self::Target;
+       }
+     #+end_src
+
+     ~DerefMut~ 和 ~Deref~ 类似, 只不过它是返回 *可变引用* 的. ~Deref~ 中包含关
+     联类型 ~Target~, 它表示解引用之后的目标类型.
+
+     ~String~ 类型实现了 ~Deref~:
+     #+begin_src rust
+       impl ops::Deref for String {
+           type Target = str;
+           fn deref(&self) -> &str {
+               unsafe {
+                   str::from_utf8_unchecked(&self.vec)
+               }
+           }
+       }
+     #+end_src
+     
+     所以 ~&String~ 类型会被自动隐式转换为 ~&str~. 除了 ~String~ 类型, 标准库中
+     常用的其他类型都实现了 ~Deref~.
+     eg: ~Vec<T>~, ~Box<T>~, ~Rc<T>~, ~Arc<T>~ 等.
+
+     *实现 ~Deref~ 的目的只有一个, 就是简化编程*.
+     
+**** 手动解引用
+     有些情况下, 就算实现了 ~Deref~, 编译器也不会自动解引用.
+
+     当某类型和其解引用模板类型中包含了相同的方法时, 编译器就不知道该用哪一个了.
+     此时就需要 *手动解引用*.
+
+     针对 match 引用需要手动解引用
+     
+     手动解引用把 ~&String~ 类型转换成 ~&str~ 类型, 具体有下列几种方式:
+     - ~match x.deref()~, 直接调用 deref 方法, 需要 ~used std::ops::Deref~
+     - ~match x.as_ref()~, ~String~ 列席提供了 ~as_ref~ 方法来返回一个 ~&str~ 类
+       似, 该方法定义于 ~AsRef~ trait 中
+     - ~match x.borrow()~, 方法 borrow 定义于 ~Borrow~ trait 中, 行为和 ~AsRef~
+       类型一样. 需要 ~use std::borrow::Borrow~.
+     - ~match &*x~, 使用 "解引用" 操作符, 将 ~String~ 类型转换为 ~str~, 然后再用
+       "引用" 操作符转为 ~&str~.
+     - ~match &x[..]~, 这是因为 ~String~ 类型的 index 操作可以返回 ~&str~ 类型
+
+     除了自动解引用隐式转换, Rust 还提供了不少显式的手动转换类型的方式.
+
+*** as 操作符
+    as 操作符最常用的场景就是转换 Rust 中的基本数据类型. 需要注意的是, as 关键
+    字 *不支持重载*.
+
+    *注意*: 对长(大小)类型转为短(大小)类型时, 会被 *截断处理*. 这些情况下, 最好
+    使用标准库中提供的专门的方法, 而不要直接使用 as 操作符.
+     
+**** 无歧义完全限定语法
+     为结构体实现多个 trait 时, 可能出现同名方法
+
+     不论是当做 trait 静态函数使用还是使用 as 操作符, 都叫做 *无歧义完全限定语法
+     (Fully Qualified Syntax for Disambinguation)*, 曾经也有另外一个名字: *通用
+     函数调用语法(UFCS)*. 这两种方式的共同之处就是都需要将结构体实例变量 s 的引
+     用显式地传入 test 方法中. 但是建议用后者, 因为 ~<S as A>::test()~ 语义比较
+     完整, 它表明了调用的是 S 结构体实现 A 中的 test 方法. 而第一种方式 *遗漏了*
+     S 结构体这一信息, 可读性相对差一些. 这两种方式都可以看做 *对 trait 行为的转
+     换*.
+
+**** 类型和子类型相互转换
+     as 转换还可以用于 *类型* 和 *子类型* 之间的转换. Rust 中没有标准定义中的子
+     类型, eg: 结构体继承, 但是 *生命周期标记可看做子类型*. eg: ~&'static str~
+     类型是 ~&'a str~ 类型的子类型, 因为二者的生命周期标记不同, ~'a~ 和
+     ~'static~ 都是生命周期标记, 其中 ~'a~ 是泛型标记, 是 ~&str~ 的通用形式, 而
+     ~'static~ 则是特指静态生命周期的 ~&str~ 字符串. 所以, 通过 as 操作符转换可
+     以将 ~&'static str~ 类型转为 ~&'a str~ 类型.
+
+*** From 和 Into
+    *From* 和 *Into* 是定义于 ~std::convert~ 模块中的两个 trait. 它们定义了
+    *from* 和 *into* 两个方法, 这两个方法互为反操作.
+    
+    From 和 Into 的内部实现
+    #+begin_src rust
+      pub trait From<T> {
+          fn from(T) -> Self;
+      }
+
+      pub trait Into<T> {
+          fn into(self) -> T;
+      }
+    #+end_src
+
+    对于类型 T, 如果它实现了 ~From<U>~, 则可以通过 ~T::from(u)~ 来生成 T 类型的
+    实例, 此处 u 为 U 的类型实例.
+
+    关于 Into 有一条默认的规则: *如果类型 U 实现了 From<T>, 则 T 类型实例调用
+    into 方法就可以转换为类型 U*. 这是因为 Rust 标准库内部有一个默认的实现.
+
+    为所有实现了 ~From<T>~ 类型的 T 实现 ~Info<U>~:
+    #+begin_src rust
+      impl<T, U> Into<U> for T where U: From<T>
+    #+end_src
+    
+    ~String~ 类型实现了 ~From<&str>~, 所以可以使用 into 方法将 ~&str~ 转换为
+    ~String~:
+    #+begin_example
+                   From<T>
+      -------   <--------------  -------
+      |  U  |                    |  T  |
+      -------   -------------->  -------
+         |           Into<U>        |
+         |                          |
+       String                      &str
+    #+end_example
+    
+    所以, 一般情况下, 只需要实现 From 即可, 除非 From 不容易实现, 才需要考虑实现
+    into.
+
+    在标准库中, 还包含了 *TryForm* 和 *TryInto* 两种 trait, 是 *From* 和 *Into*
+    的错误处理版本, 因为类型转换是有可能发生错误的, 所以在需要进行错误处理的时候
+    可以使用 *TryFrom* 和 *TryInto*. (Rust v1.34.0 已稳定)
+
+    另外, 标准库中还包含了 *AsRef* 和 *AsMut* 两种 trait, 可以将值分别转换为不可
+    变引用和可变引用. AsRef 和标准库的另外一个 *Borrow* trait 功能有些类似, 但是
+    AsRef 比较轻量级, 它只是简单地将值转换为引用, 而 Borrow trait 可以用来将某个
+    复合类型抽象为拥有借用语义的类型. 更详细的内存请参考标准库文档.
