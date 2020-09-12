@@ -3,3 +3,10 @@
    部分代码使用了 ~#![feature(xxx)]~ 试验性特性, 使用时需要声明在文件头部, 且需
    要使用 nightly 的 rustup toolchain 才可以编译.
 
+** 常用名词
+   - CTFE: 第一次出现于: 第二章(语言精要)->函数与闭包->CTFE机制(~README.org~ 第
+     243 行)
+     Rust 编译器也可以像 C++ 或者 D 语言那样, 拥有 *编译时函数执行* (Compile-Time
+     Function Execution, CTFE) 的能力. 在 Rust 2018 版本的首个语义化版本 1.30 中,
+     CTFE 的一个最小化子集已经稳定了.
+   
