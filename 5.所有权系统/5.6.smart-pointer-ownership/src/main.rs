@@ -51,6 +51,8 @@ impl<'a> Token<'a> {
         S: Into<Cow<'a, str>>,
     {
         Token {
+            // TODO: into 的思考
+            // Tips: 所有基础类型都实现了 `into()`, 但是需要指定结果类型
             // 不论 `String` 还是 `&str`, 都通过 `into()` 转换
             // 并且对于 `String` 和 `&str` 还可以跨线程安全传递
             raw: raw.into()
@@ -153,6 +155,12 @@ fn main() {
 
     // 利用 `Cow<T>` 来统一实现规范
     let token = Token::new("abc123");
+    let sstr = "abc123";
+    // 所有基础类型都实现了 `into()`, 但是需要指定返回类型
+    // let res_sstr: &str = sstr.into();
+    // println!("res_sstr into &str: {}", res_sstr);
+    // let res_sstr: String = sstr.into();
+    // println!("res_sstr into String: {}", res_sstr);
     let token = Token::new("api.example.io".to_string());
     thread::spawn(move || {
         println!("token: {:?}", token);
