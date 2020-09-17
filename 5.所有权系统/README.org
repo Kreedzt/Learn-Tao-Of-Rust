@@ -486,3 +486,216 @@
     - 如果实现 trait 的类型包含 ~&'a X~ 或 ~&' a mut X~, 则默认生命周期就是 ~'a~.
     - 如果实现 trait 的类型只有 ~T: 'a~, 则默认生命周期就是 ~'a~.
     - 如果实现 trait 的类型包含多个类似 ~T: 'a~ 的从句, 则生命周期需要明确指定
+
+** 智能指针与所有权
+   除了普通的引用(借用)类型, Rust 还提供具有移动语义(引用语义)的智能指针. 智能指
+   针和普通引用的区别之一就是所有权的不同. 智能指针拥有资源的所有权, 而普通引用
+   只是对所有权的借用.
+
+   ~Box<T>~ 实现 deref 方法的源码
+   #+begin_src rust
+     impl<T: ?Sized> Deref for Box<T> {
+         type Target = T;
+         fn deref(&self) -> &T {
+             &**self
+         }
+     }
+   #+end_src
+   
+   此方法返回的是 ~&T~ 类型. 这里没有添加生命周期参数是因为满足生命周期省略规则.
+   实际上, 这里的 ~*a~ 和 ~*b~ 操作相当于 ~*(a.deref()) 和 ~*(b.deref())~ 操作.
+   对于 ~Box<T>~ 类型来说, *如果包含的类型 ~T~ 属于复制语义, 则执行按位复制*;
+   *如果属于移动语义, 则移动所有权*.
+
+   这种对 ~Box<T>~ 使用操作符(~*~)进行解引用而转移所有权的行动, 被称为 *解引用移
+   动*, 理论上应该使用 trait DerefMove 定义此行为, 这也是官方未来团队打算做的,
+   但实际上 Rust 源码中并不存在此 trait. *目前支持此行为的智能指针只有 ~Box<T>~
+   .*, ~Rc<T>~ 和 ~Arc<T>~ 不支持解引用移动.
+
+   #+begin_src rust
+     #[lang = "owned_box"]
+     pub struct Box<T:?Sized>(Unique<T>);
+   #+end_src
+
+   ~Box<T>~ 标注了 Lang Item 为 "owned_box", 编译器由此来识别 ~Box<T>~ 类型, 因
+   为 ~Box<T>~ 与原生类型不同, 并不具备类型名称(eg: bool), 但它代表所有权唯一的
+   智能指针的特殊性, 所以需要使用 Lang Item 来专门识别, 而其他的智能指针不是这样
+   的.
+
+   ~Box<T>~ 和其他指针相同的地方在于内部都使用了 box 关键字来进行堆分配.
+
+   #+begin_src rust
+     impl<T> Box<T> {
+         pub fn new(x: T) -> Box<T> {
+             box x
+         }
+     }
+
+     impl<T> Rc<T> {
+         pub fn new(x: T) -> Rc<T> {
+             unsafe {
+                 Rc {
+                     ptr: Shared::new(Box::into_raw(box RcBox {})),
+                 }
+             }
+         }
+     }
+
+     impl<T> Arc<T> {
+         pub fn new(x: T) -> Arc<T> {
+             let x: Box<_> = box ArcInner {};
+         }
+     }
+   #+end_src
+   
+
+   box 关键字 *只可以在 Rust 源码内部使用*, 并未作为公开 API 使用.
+
+   box 关键字会调用内部堆分配方法 ~exchange_malloc()~ 和堆释放方法 ~box_free()~
+   进行堆内存管理.
+   
+   #+begin_src rust
+     #[cfg_attr(not(test), lang = "box_free")]
+     #[inline]
+     pub(crate) unsafe fn box_free<T: ?Sized>(ptr: *mut T) {
+         // ...
+         // Heap.dealloc(ptr as *mut u8, layout);
+
+         unsafe {
+             let size = size_of_val(ptr.as_ref());
+             let align = min_align_of_val(ptr.as_ref());
+             let layout = Layout::from_size_align_unchecked(size, align);
+             Global.dealloc(ptr.cast().into(), layout)
+         }
+     }
+
+     #[cfg(not(test))]
+     #[lang = "exchange_malloc"]
+     #[inline]
+     unsafe fn exchange_malloc(size: usize, align: usize) -> *mut u8 {
+         // ...
+         // Heap.alloc(layout)
+    
+         let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
+         match Global.alloc(layout) {
+             Ok(ptr) => ptr.as_mut_ptr(),
+             Err(_) => handle_alloc_error(layout),
+         }
+     }
+   #+end_src
+
+   这两个方法都被标注了 Lang Item, 方便编译器来识别. ~box_free()~ 用于释放
+   (dealloc) 堆内存, ~exchange_malloc()~ 用于分配(alloc) 堆内存.
+
+*** 共享所有权 Rc<T> 和 Weak<T>
+    引用计数(reference counting)可以说是简单的 GC 算法之一了, 应用于多种语言.
+    Rust 中提供了 ~Rc<T>~ 智能指针来支持引用计数, 但不同于 GC 的是, Rust 是确定
+    性的析构, 开发者知道什么时候会被析构.
+
+    Rust 中只有拥有所有权才能释放资源, ~Rc<T>~ 可以将多个所有权共享给多个变量,
+    每当共享一个所有权时, 计数就会增加一次, 只有当计数为 0, 也就是当所有共享变量
+    离开作用域时, 该值才会被析构. ~Rc<T>~ 主要用于希望共享堆上分配的数据可以供程
+    序的多个部分读取的场景, 并且主要确保共享的资源析构函数都能被调用到. ~Rc<T>~
+    是单线程引用计数指针, 不是线程安全的类型, Rust 也不允许它被传递或共享给别的
+    线程.
+
+    Rc 的 ~clone()~ 并非深复制, 只是简单地增加共享所有权的计数, 但是这个计数操作
+    会产生一定的计算型开销.
+
+    通过 ~clone()~ 方法共享的引用所有权被称为 *强引用*. Rc 上的静态方法
+    ~downgrade()~ 创建了另外一种智能指针类型 ~Weak<T>~, 它也是引用计数指针, 属于
+    ~Rc<T>~ 的另一种版本, 它共享的指针没有所有权, 所以被称为 *弱引用*, 但
+    ~Weak<T>~ 还保留对 ~Rc<T>~ 中值的引用. ~Rc::strong_count()~ 返回的是强引用的
+    计数, ~Rc::weak_count()~ 返回的是弱引用的计数.
+
+    可以使用 ~Weak<T>~ 弱引用解决循环引用问题. 也可以通过使用 Arena 模式来解决.
+    即利用线性数组来模拟节点之间的关系, 可以有效避免循环引用.
+
+*** 内部可变性 Cell<T> 和 RefCell<T>
+    Rust 中的可变或不可变主要是针对一个变量绑定而言的, eg: 对于结构体来说, 可变
+    或不可变只能对其实例进行设置, 而不腻设置单个成员的可变性. 但是在实际的开发中,
+    某个字段是可变而其他字段不可变的情况确实存在, eg: 在网络请求中, 每个请求博阿
+    含的路径, 参数等状态, 都应该是可变的. Rust 提供了 ~Cell<T>~ 和 ~RefCell<T>~
+    来应对这种情况. 它们本质上不属于智能指针, 只是可以提供内部可变性(Interior
+    Mutability)的容器.
+
+**** Cell<T>
+     内部可变性实际上是 Rust 中的一种设计模式. 内部可变性容器是对 Stuct 的一种封
+     装, 表面不可变, 但内部可以通过某种方法来改变里面的值.
+     
+     使用 ~Cell<T>~ 内部可变容器确实方便了编程. 它提供的 ~set()~ / ~get()~ 方法
+     像极了 OOP语言中场景的 setter/getter 方法, 封装了对象属性的获取和设置行为.
+     ~Cell<T>~ 通过对外暴露的 ~set()~ / ~get()~ 方法实现了对内部值的修改, 而其本
+     身确是不可变的. 所以, 实际上 ~Cell<T>~ 包裹的 ~T~ 本身合法地避开了借用检查. 
+
+     对于包裹在 ~Cell<T>~ 中的类型 ~T~, 只有实现了 Copy 的类型 ~T~, 才可以使用
+     get 方法获取包裹的值, 因为 get 方法内部返回的是对内部值的复制. 但是任何类型
+     ~T~ 都可以使用 set 方法修改其包裹的值. 由此可见, ~Cell<T>~ 并没有违反 Rust
+     保证的内存安全原则, 对于实现 Copy 的类型 ~T~, 可以任意读取; 对于没有实现
+     Copy 的类型 ~T~, 则提供了 ~get_mut()~ 方法来返回可变引用, 依然遵循 Rust 的
+     借用检查规则.
+
+     使用 ~Cell<T>~ 虽然没有运行时开销, 但是尽量不要用它包裹大的结构体, 应该选择
+     包装某个字段, 因为 ~Cell<T>~ 内部每次 get/set 都会执行一次按位复制.
+
+**** RefCell<T>
+     对于没有实现 Copy 的类型, 使用 ~Cell<T>~ 有许多不便. Rust 提供的
+     ~RefCell<T>~ 使用的范围更广, 对类型 ~T~ 并没有 Copy 的限制.
+
+     ~RefCell<T>~ 提供了 ~borrow()~ / ~borrow_mut()~ 方法, 对应 ~Cell<T>~ 的
+     ~get()~ / ~set()~ 方法. ~RefCell<T>~ 虽然没有分配空间, 但它是有运行时开销的,
+     因为它自己维护着一个运行时借用检查器, 如果在运行时出现了违反借用规则的情况,
+     eg: 持有多个可变借用, 则会引发线程 panic.
+
+     若通过 ~borrow_mut()~ 方法第二次获取可变引用, 这显然违反了借用规则, 虽然是
+     运行时检查, 但其借用规则和 Rust 编译器借用检查规则是一样的, 所以此时 main
+     函数线程就会崩溃.
+
+     ~Cell<T>~ 和 ~RefCell<T>~ 使用最多的场景就是配合只读引用来使用, eg: ~&T~ 或
+     ~Rc<T>~. 
+
+     ~Cell<T>~ 和 ~RefCell<T>~ 之间的区别可以总结如下:
+     - ~Cell<T>~ 使用 ~set()~ / ~get()~ 方法直接操作包裹的值, ~RefCell<T>~ 通过
+       ~borrow()~ / ~borrow_mut()~ 返回包装过的引用 ~Ref<T>~ 和 ~RefMut<T>~ 来操
+       作包裹的值
+     - ~Cell<T>~ 一般适合复制语义类型(实现了 Copy), ~RefCell<T>~ 一般适合移动语
+       义类型(未实现 Copy).
+     - ~Cell<T>~ 无运行时开销, 并且拥有不会在运行时引发 panic 错误. ~RefCell<T>~
+       需要在运行时借用检查, 所以有运行时开销, 一旦发现违反借用规则的情况, 则会
+       引发线程 panic 而退出当前线程.
+
+     在日常的编程开发中, 不要为了专门避开借用检查而使用 ~Cell<T>~ 或
+     ~RefCell<T>~, 而应该仔细分析具体的需求来选择适合的解决方法.  
+
+**** 写时复制 Cow<T>
+     写时复制(Copy on Write)技术是一种程序中的优化策略, 被应用于多种场景. eg:
+     Linux 中父进程创建子进程时, 并不是立刻让子进程复制一份进程空间, 而是先让子
+     进程共享父进程的进程空间, 只有等到子进程真正需要写入的时候才复制进程空间.
+     这种 "拖延" 技术实际上很好地减少了开销. Rust 也采纳这种思想提供了 ~Cow<T>~
+     容器.
+
+     ~Cow<T>~ 是一个枚举体的智能指针, 包括两个可选值
+     - Borrowed, 用于包裹引用
+     - Owned, 用于包裹所有者.
+
+     跟 ~Option<T>~ 类型有点相似, ~Option<T>~ 表示的是值的 "有" 和 "无", 而
+     ~Cow<T>~ 表示的是所有权的 "借用" 和 "拥有".
+
+     ~Cow<T>~ 提供的功能是: *以不可变的方式访问借用内容, 以及在需要可变借用或所
+     有权的时候再克隆一份数据*. ~Cow<T>~ 实现了 Deref, 这意味着可以直接调用其包
+     含数据的不可变方法. ~Cow<T>~ 旨在减少复制操作, 提高性能, 一般用于读多写少的
+     场景.
+
+     ~Cow<T>~ 写时复制使用要点:
+     - ~Cow<T>~ 实现了 Deref, 所以可以直接调用 ~T~ 的不可变方法
+     - 在需要修改 ~T~ 时, 可以使用 ~to_mut()~ 方法来获取可变借用. 该方法会产生克
+       隆, 但仅克隆一次, 如果多次调用, 则只会使用第一次的克隆对象. 如果 ~T~ 本身
+       拥有所有权, 则此时调用 ~to_mut()~ 不会发生克隆.
+     - 在需要修改 ~T~ 时, 也可以使用 ~into_owned()~ 方法来获取一个拥有所有权的对
+       象. 如果 ~T~ 是借用类型, 这个过程会发生克隆, 并创建新的所有权对象. 如果
+       ~T~ 是所哟去对象, 则会将所有权转移到新的克隆对象.
+
+     *' ~Cow<T>~ 的另一个用处是统一实现规范*.
+     
+     
+
