@@ -324,8 +324,7 @@
     关于引用, 还有一个值得注意的地方: *解引用操作会获得所有权*. 在需要对语义类型
     (eg: ~&String~ 类型)进行解引用操作时, 需要注意这一点.
 
-    
-    
+        
 ** 生命周期参数
    值的生命周期和词法作用域有关, 但是借用可以在各个函数间传递, 必然会跨越多个词
    法作用域. 对于函数本地声明的拥有所有权的值或者借用来说, Rust 编译器包含的借用
@@ -696,6 +695,28 @@
        ~T~ 是所哟去对象, 则会将所有权转移到新的克隆对象.
 
      *' ~Cow<T>~ 的另一个用处是统一实现规范*.
-     
-     
 
+     附加: 
+     1. 针对 ~into()~ 的探讨: [[https://wiki.jikexueyuan.com/project/rust-primer/intoborrow/into.html][极客学院]] 
+     2. 针对 ~Cow<T>~ 的更多用法: [[https://wiki.jikexueyuan.com/project/rust-primer/intoborrow/cow.html][极客学院]]
+     
+** 并发安全与所有权
+   Rust 的内存安全特性也非常适合用于并发, 保证线程安全. Rust 使用了 2 个标签
+   trait: Send 和 Sync 来对类型进行分类.
+
+   - 如果类型 ~T~ 实现了 Send, 就是告诉编译器该类型的实例可以在线程间安全传
+     递所有权
+   - 如果类型 ~T~ 实现了 Sync, 就是表明可以安全地跨线程共享, 向编译器表明该类型
+     的实例在多线程并发中不可能导致内存不安全.
+     
+   Rust 提供了一些线程安全的同步机制, eg: ~Arc<T>~, ~Mutex<T>~, ~RwLock<T>~ 和
+   Atomic 系列类型. 以下为简要说明:
+
+   - ~Arc<T>~ 是线程安全版本的 ~Rc<T>~
+   - ~Mutex<T>~ 是锁, 同一时间仅允许有一个线程进行操作.
+   - ~RwLock<T>~ 相当于线程安全版本的 ~RefCell<T>~, 同时运行多个 reader 或者一个 writer.
+   - Atomic 系列类型包括: AtomicBool, Aomiclsize, AtomicUsize 和 AtomicPtr 这 4
+     种, 虽然比较少, 但是可以用 AtomicPtr 来模拟其他想要的类型, 它相当于线程安全
+     版本的 ~Cell<T>~.
+
+   11 章会详细讲解并发安全.  
