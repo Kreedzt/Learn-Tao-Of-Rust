@@ -720,3 +720,184 @@
      版本的 ~Cell<T>~.
 
    11 章会详细讲解并发安全.  
+
+** 非词法作用域生命周期
+   Rust 严格的借用检查虽然避免了悬垂指针, 保证了内存安全, 但是代码的开发体验还是
+   差强人意的. 有时候严格的借用检查规则会让代码变得非常难以让人理解.
+
+   在低于 Rust 2018 版本中可能编译不通过, 因为借用检查机制粒度太粗, 生命周期的长
+   度由定义的先后顺序来决定, 先定义的最长. 当将 ~&y~ 传入 foo 函数时, 必须满足借
+   用检查规则, 即借用方的生命周期不能长于借方的生命周期. 此时 ~z~ 是借用方, ~y~
+   是出借方, 而目前借用方 ~z~ 的生命周期明显长于出借方 ~y~ 的, 故可能报错. 若调
+   换定义顺序, 则在低版本中可以编译通过.
+
+   Rust 在 2018 版本中引入了 *非词法作用域生命周期(Non-Lexical Lifetime, NLL)*
+   来进行改善.
+
+*** 基于 MIR 的借用检查
+    第一章介绍过的编译过程: 从源码到抽象语法树, 然后再由抽象语法树到高级中间语言
+    (HIR), 再由 HIR到中级中间语言(MIR), 最后由 MIR到 LLVM IR. 当前是借用检查器是
+    基于词法作用域的. 当前的借用检查器是基于词法作用域的, 具体到编译层面, 是基于
+    抽象语法树(AST) 之后的 HIR. HIR 是 AST 的简化版本, 所以借用检查器本质上还是
+    基于 AST 的. 如果要改进借用检查器, 就必须再往下一层, 采用更细粒度的 MIR.
+
+    MIR 是基于 *控制流图(Control Flow Graph, CFG)* 的抽象数据结构, 它用有向图
+    (DAG) 形式包含了程序执行过程中所有可能的流转. 所以将基于 MIR 的借用称为非词
+    法作用域的生命周期, 因为确实不依赖词法作用域的. 在 NLL 最终发布之后, 这个名
+    词术语很可能就会被废弃.
+
+    MIR 由以下关键部分组成:
+    - *基本块(Basic Block, bb)*: 它是控制流图的基本单位
+      + 语句(Statement)
+      + 终止句(Terminator)
+    - *本地(Local)变量*: 栈中内存的位置, eg: 函数参数, 临时值, 局部变量等. 一般
+      用下划线和数字作为标识(eg: ~_1~), 其中 ~_0~ 通常表示返回值地址.
+    - *位置(Place)*: 在内存中标识位置的表达式: eg: ~_1~ 或 ~_1.f~.
+    - *右值(RValue)*: 产生值的表达式, 一般是指赋值操作的右侧表达式, 也就是值表达
+      式.
+
+    用于生成 MIR 的源码  
+    #+begin_src rust
+      fn main() {
+          let a = 1;
+          a + 2;
+      }
+    #+end_src
+
+    #+begin_example
+      // WARNING: This output format is intended for human consumers only
+      // and is subject to change without notice. Knock yourself out.
+      fn main() -> () {
+          let mut _0: ();                      // main 的返回值
+          let _1: i32;                         // 变量声明
+          scope 1 {                            // 新的作用域
+              debug a => _1;                   
+          }
+
+          bb0: {                               // 基础块 
+              StorageLive(_1);                 // 语句, 代表活跃, LLVM 用它来分配栈空间
+              _1 = const 1_i32;                // 赋值
+                                               // ty::Const
+                                               // + ty: i32
+                                               // + val: Value(Scalar(0x00000001))
+                                               // mir::Constant
+                                               // + span: src/main.rs:2:13: 2:14
+                                               // + literal: Const { ty: i32, val: Value(Scalar(0x00000001)) }
+              _0 = const ();                   // scope 0 at src/main.rs:1:11: 4:2
+                                               // ty::Const
+                                               // + ty: ()
+                                               // + val: Value(Scalar(<ZST>))
+                                               // mir::Constant
+                                               // + span: src/main.rs:1:11: 4:2
+                                               // + literal: Const { ty: (), val: Value(Scalar(<ZST>)) }
+              StorageDead(_1);                 // 语句, 代表不活跃
+              return;                          // 返回
+          }
+      }
+    #+end_example
+
+    用于生成 MIR 的源码2:
+    内容来自: [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/200][issue]]
+    #+begin_src rust
+      fn main(){
+          let s = String::from("abc").as_str();
+      }
+    #+end_src
+    
+    #+begin_example
+      // WARNING: This output format is intended for human consumers only
+      // and is subject to change without notice. Knock yourself out.
+      fn main() -> () {
+          let mut _0: ();                      // return place in scope 0 at src/main.rs:1:10: 1:10
+          let _1: &str;                        // in scope 0 at src/main.rs:2:9: 2:10
+          let mut _2: &std::string::String;    // in scope 0 at src/main.rs:2:13: 2:32
+          let _3: std::string::String;         // in scope 0 at src/main.rs:2:13: 2:32
+          scope 1 {
+              debug s => _1;                   // in scope 1 at src/main.rs:2:9: 2:10
+          }
+
+          bb0: {
+              StorageLive(_1);                 // scope 0 at src/main.rs:2:9: 2:10
+              StorageLive(_2);                 // scope 0 at src/main.rs:2:13: 2:32
+              StorageLive(_3);                 // scope 0 at src/main.rs:2:13: 2:32
+              _3 = const <std::string::String as std::convert::From<&str>>::from(const "abc") -> bb2; // 返回值流向 bb2
+                                               // ty::Const
+                                               // + ty: fn(&str) -> std::string::String {<std::string::String as std::convert::From<&str>>::from}
+                                               // + val: Value(Scalar(<ZST>))
+                                               // mir::Constant
+                                               // + span: src/main.rs:2:13: 2:25
+                                               // + user_ty: UserType(0)
+                                               // + literal: Const { ty: fn(&str) -> std::string::String {<std::string::String as std::convert::From<&str>>::from}, val: Value(Scalar(<ZST>)) }
+                                               // ty::Const
+                                               // + ty: &str
+                                               // + val: Value(Slice { data: Allocation { bytes: [97, 98, 99], relocations: Relocations(SortedMap { data: [] }), init_mask: InitMask { blocks: [7], len: Size { raw: 3 } }, size: Size { raw: 3 }, align: Align { pow2: 0 }, mutability: Not, extra: () }, start: 0, end: 3 })
+                                               // mir::Constant
+                                               // + span: src/main.rs:2:26: 2:31
+                                               // + literal: Const { ty: &str, val: Value(Slice { data: Allocation { bytes: [97, 98, 99], relocations: Relocations(SortedMap { data: [] }), init_mask: InitMask { blocks: [7], len: Size { raw: 3 } }, size: Size { raw: 3 }, align: Align { pow2: 0 }, mutability: Not, extra: () }, start: 0, end: 3 }) }
+          }
+
+          bb1 (cleanup): {
+              resume;                          // scope 0 at src/main.rs:1:1: 3:2
+          }
+
+          bb2: {
+              _2 = &_3;                        // scope 0 at src/main.rs:2:13: 2:32
+              _1 = const std::string::String::as_str(move _2) -> [return: bb3, unwind: bb4]; // 操作完成后流向 bb3, 解绑 bb4
+                                               // ty::Const
+                                               // + ty: for<'r> fn(&'r std::string::String) -> &'r str {std::string::String::as_str}
+                                               // + val: Value(Scalar(<ZST>))
+                                               // mir::Constant
+                                               // + span: src/main.rs:2:33: 2:39
+                                               // + literal: Const { ty: for<'r> fn(&'r std::string::String) -> &'r str {std::string::String::as_str}, val: Value(Scalar(<ZST>)) }
+          }
+
+          bb3: {
+              StorageDead(_2);                 // scope 0 at src/main.rs:2:40: 2:41
+              drop(_3) -> bb5;                 // drop 操作完成后流向 bb5
+          }
+
+          bb4 (cleanup): {
+              drop(_3) -> bb1;                 // drop 操作完成后流向 bb1
+          }
+
+          bb5: {
+              StorageDead(_3);                 // scope 0 at src/main.rs:2:41: 2:42
+              _0 = const ();                   // scope 0 at src/main.rs:1:10: 3:2
+                                               // ty::Const
+                                               // + ty: ()
+                                               // + val: Value(Scalar(<ZST>))
+                                               // mir::Constant
+                                               // + span: src/main.rs:1:10: 3:2
+                                               // + literal: Const { ty: (), val: Value(Scalar(<ZST>)) }
+              StorageDead(_1);                 // scope 0 at src/main.rs:3:1: 3:2
+              return;                          // scope 0 at src/main.rs:3:2: 3:2
+          }
+      }
+    #+end_example
+
+    
+    StorageLive 和 StorageDead 语句表示变量的活跃信息, 该活跃信息会将发给 LLVM,
+    LLVM 会根据此信息将变量分配到不同的栈槽(Stack Slot). 只有活跃的变量才可以使
+    用. drop 语句是由编译器自动插入的 drop flag.
+
+    *内容有改动*: [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/130][issue]]
+
+    非词法作用域的工作原理阶段:
+    1. 借用检查第一阶段: 计算作用域范围(Scope)内的借用. 在 CFG 中的每个节点计算
+       一系列的借用, 并将其表示为元组, 形如(~'a~, ~shared|uniq|mut~, ~lvalue~),
+       其中 ~'a~ 表示生命周期参数, ~shared|uniq|mut~ 分别表示共享, 独占和可变,
+       ~lvalue~ 表示左值. 然后再进行各种计算, 随着数据流进行传播
+    2. 借用检查第二阶段: 报告错误. 在确定了借用范围之后, 通过遍历 MIR 来计算范围
+       内的非法借用. MIR 中的各种语句将派上用场, eg: StorageLive, drop 等.
+       
+    目前 NLL 还在实现阶段, 虽然解决了一部分问题, 但是还有更多问题需要解决. 关于
+    NLL 更详细的内容可以参考相关 [[https://github.com/rust-lang/rfcs/blob/master/text/2094-nll.md][RFC]].
+    MIR 除了做借用检查, 还做边界, 溢出和匹配等检查, 关于 MIR 更详细的介绍, 可以
+    查看官方的 [[https://rust-lang-nursery.github.io/rustc-guide/mir/index.html][编译器之书]].
+
+*** NLL 目前可以改善的问题
+    Rust 2018 版本默认支持了 NLL. NLL 可以识别一些常见的使用场景.
+
+    
+
+    
