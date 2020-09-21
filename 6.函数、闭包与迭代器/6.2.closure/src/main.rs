@@ -15,25 +15,24 @@ fn counter(i: i32) -> impl Fn(i32) -> i32 {
     Box::new(move |n: i32| n + i)
 }
 
-fn val() -> i32 {
-    5
-}
+fn val() -> i32 { 5 }
 
 // 模拟编译器对闭包的实现
 struct Closure {
-    env_var: u32
+    // 代表从环境中捕获的自由变量
+    env_var: u32,
 }
 
 impl FnOnce<()> for Closure {
     type Output = u32;
-    extern "rust-call" fn call_one(self, args: ()) -> u32 {
+    extern "rust-call" fn call_once(self, args: ()) -> u32 {
         println!("call it FnOnce()");
         self.env_var + 2
     }
 }
 
 impl FnMut<()> for Closure {
-    extern "rust-cal" fn call_mut(&mut self, args: ()) -> u32 {
+    extern "rust-call" fn call_mut(&mut self, args: ()) -> u32 {
         println!("call it FnMut()");
         self.env_var + 2
     }
@@ -42,21 +41,15 @@ impl FnMut<()> for Closure {
 impl Fn<()> for Closure {
     extern "rust-call" fn call(&self, args: ()) -> u32 {
         println!("call it Fn()");
-        self.env_val + 2
+        self.env_var + 2
     }
 }
 
-fn call_it<F: Fn() -> u32>(f: &F) -> u32 {
-    f()
-}
+fn call_it<F: Fn() -> u32>(f: &F) -> u32 { f() }
 
-fn call_it_mut<F: FnMut() -> u32>(f: &mut F) -> u32 {
-    f()
-}
+fn call_it_mut<F: FnMut() -> u32>(f: &mut F) -> u32 { f() }
 
-fn call_it_once<F: FnOnce() -> u32>(f: F) -> u32 {
-    f()
-}
+fn call_it_once<F: FnOnce() -> u32>(f: F) -> u32 { f() }
 
 fn main() {
     //
@@ -82,9 +75,15 @@ fn main() {
     // 模拟编译器对闭包的实现
     let env_var = 1;
     let mut c = Closure { env_var: env_var };
+    // 实例调用
+    // 实际由 ABI 实现("rust-call")
     c();
+    // 必须显式指定一个单元值作为参数
     c.call(());
+    // 必须显式指定一个单元值作为参数
     c.call_mut(());
+    // 必须显式指定一个单元值作为参数
+    // `call_once` 调用之后, 之前的实例所有权被转移, 无法再次被使用.
     c.call_once(());
     let mut c = Closure { env_var: env_var };
     {
@@ -96,4 +95,15 @@ fn main() {
     {
         assert_eq!(3, call_it_once(c));
     }
+
+    // 与上者等价的闭包示例
+    let env_var = 1;
+    let c = || env_var + 2;
+    assert_eq!(3, c());
+
+    // 显式指定闭包类型
+    let env_var = 1;
+    // 该类型为 trait 对象, 此处必须使用 trait 对象
+    let c: Box<Fn() -> i32> = Box::new(|| env_var + 2);
+    assert_eq!(3, c());
 }

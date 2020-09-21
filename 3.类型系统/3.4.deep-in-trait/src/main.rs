@@ -125,7 +125,7 @@ fn static_dispatch<T>(t: &T) where T: Bar {
 }
 
 // 使用 trait 对象 -- 动态分发
-fn dynamic_dispatch(t: &Bar) {
+fn dynamic_dispatch(t: &dyn Bar) {
     t.baz();
 }
 
