@@ -51,6 +51,34 @@ fn call_it_mut<F: FnMut() -> u32>(f: &mut F) -> u32 { f() }
 
 fn call_it_once<F: FnOnce() -> u32>(f: F) -> u32 { f() }
 
+// 闭包为翻译为匿名结构体和 trait 的情况
+struct Closure2<'a> {
+    env_var: &'a u32,
+}
+
+impl<'a> FnOnce<()> for Closure2<'a> {
+    type Output = ();
+    extern "rust-call" fn call_once(self, args: ()) -> () {
+        println!("{:?}", self.env_var);
+    }
+}
+
+impl<'a> FnMut<()> for Closure2<'a> {
+    extern "rust-call" fn call_mut(&mut self, args: ()) -> () {
+        println!("{:?}", self.env_var);
+    }
+}
+
+impl<'a> Fn<()> for Closure2<'a> {
+    extern "rust-call" fn call(&self, args: ()) -> () {
+        println!("{:?}", self.env_var);
+    }
+}
+
+// 使用 `FnOnce()` 闭包作为参数
+// 在函数体内执行闭包, 用于判断自身的所有权是否转移
+fn call<F: FnOnce()>(f: F) { f() }
+
 fn main() {
     //
     let f = counter(3);
@@ -106,4 +134,127 @@ fn main() {
     // 该类型为 trait 对象, 此处必须使用 trait 对象
     let c: Box<Fn() -> i32> = Box::new(|| env_var + 2);
     assert_eq!(3, c());
+
+    // 复制语义类型自动实现 `Fn`
+    // 绑定为字符串字面量, 为复制语义类型
+    let s = "hello";
+    // 闭包会按照不可变引用类型来捕获 `s`
+    // 该闭包默认自动实现了 `Fn` 这个 trait, 并且该闭包以不可变借用捕获环境中的自由变量
+    let c = || println!("{:?}", s);
+    c();
+    // 闭包 c 可以多次调用, 说明编译器自动为闭包表达式实现的结构体实例并未失去所有权.
+    c();
+    // 对 s 进行一次不可变借用
+    println!("{:?}", s);
+
+    // 闭包被翻译为匿名结构体和 trait 的情况
+    // 闭包被翻译为结构体 `Closure<'a>`, 因为环境变量是按不可变
+    let env_var = 42;
+    let mut c = Closure2 { env_var: &env_var };
+    c();
+    c.call_mut(());
+    c.call_once(());
+
+    // 实现了 `Fn` 的闭包也可以显式调用 `call_mut` 和 `call_once`
+    let s = "hello";
+    let mut c = || println!("{:?}", s);
+    c();
+    c();
+    // 依赖 `#[feature(fn_traits)]` 特性(如果不是默认的闭包调用, 并不需要此特性)
+    // 实现了 `Fn` 的闭包也可以显式调用 `call_mut` 和 `call_once` 方法
+    c.call_mut(());
+    c.call_once(());
+    c;
+    println!("{:?}", s);
+
+    // 移动语义类型自动实现 `FnOnce`
+    let s = "hello".to_string();
+    // 编译器翻译的闭包结构体中记录捕获变量的成员不是引用类型, 并且只实现 `FnOnce`
+    // error[E0525]: expected a closure that implements the `FnMut` trait, but this closure only implements `FnOnce`
+    // error[e0525]: expected a closure that implements the `fnmut` trait, but this closure only implements `fnonce`
+    let c = || s;
+    c();
+    // error[e0382]: use of moved value: `c`
+    // c();
+    // c.call(());
+    // c.call_mut(());
+
+    // 环境变量为复制语义类型时使用 `move` 关键字
+    let s = "hello";
+    // 虽然 `move` 关键字强制执行, 但闭包捕获的 `s` 执行的对象是复制语义后获取的新变量.
+    // 原始的 `s` 并未失去所有权.
+    // 所以肯定是 `&self` 和 `&mut self` 中的一种
+    // 又因为闭包 c 是不可变的, 所以只存在 `&self`;
+    // 可变借用需要使用 `mut` 关键字将 c 本身修改为可变
+    let c = move || println!("{:?}", s);
+
+    c();
+    c();
+    println!("{:?}", s);
+
+    // 环境变量为移动语义的情况
+    // 移动语义类型 `String`
+    let s = "hello".to_string();
+    // 使用 move 后无法再次使用
+    let c = move || println!("{:?}", s);
+    c();
+    c();
+    // error[E0382]: borrow of moved value: `s`
+    // println!("{:?}", s);
+
+    // move 关键字是否影响闭包本身
+    let mut x = 0;
+    let incr_x = || x += 1;
+    call(incr_x);
+    // error[E0382]: use of moved value: `incr_x`
+    // call(incr_x);
+    // 使用 move
+    let mut x = 0;
+    let incr_x = move || x += 1;
+    call(incr_x);
+    call(incr_x);
+    println!("x: {}", x);
+    // 对移动语义类型使用 `move`
+    let mut x = vec![];
+    let expand_x = move || x.push(42);
+    call(expand_x);
+    // error[E0382]: use of moved value: `expand_x`
+    // call(expand_x);
+
+    // 修改环境变量的闭包来自动实现 `FnMut`
+    // 使用 mut 关键字修改了其可变性, 变成了可变绑定
+    let mut s = "rust".to_string();
+    {
+        // 通过闭包实现自我修改, 所以需要声明 mut
+        // 如果想修改环境变量, 必须实现 `FnMut`
+        // 由编译器生成的闭包结构体实例在调用 `FnMut` 方法时, 需要 `&mut self`
+        let mut c = || s += " rust";
+        c();
+        // 改动源: https://github.com/ZhangHanDong/tao-of-rust-codes/issues/103
+        // 这行本应该出错, 但因为 NLL 的支持, 没有出错.
+        c();
+        println!("{:?}", s);
+    } // 归还了所有权
+    println!("{:?}", s);
+
+    // 实现了 `FnMut` 的闭包的情况
+    let mut s = "rust".to_string();
+    {
+        // error[E0525]: expected a closure that implements the `Fn` trait, but this closure only implements `FnMut`
+        let mut c = || s += " rust";
+        c();
+        // 闭包只实现了 `FnMut`, 没有实现 `Fn`
+        // c.call(());
+        c.call_once(());
+        println!("{:?}", s);
+    }
+    println!("{:?}", s);
+
+    // 没有捕获任何环境变量的闭包
+    // 没有捕获环境变量, 没有使用 `mut` 关键字, 然而可以多次调用
+    // 足以证明编译器为其自动实现的结构体实例并未失去所有权, 只可能是 `&self`
+    // 所以, 闭包一定实现了 `Fn`
+    let c = || println!("hhh");
+    c();
+    c();
 }
