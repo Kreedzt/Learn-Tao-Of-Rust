@@ -1,4 +1,6 @@
 #![feature(unboxed_closures, fn_traits)]
+// error[E0635]: unknown feature `fnbox`
+// #![feature(unboxed_closures, fn_traits, fnbox)]
 
 // 返回闭包
 // 放入 `Box<T>` 中是因为闭包的大小在编译期是未知的.
@@ -78,6 +80,93 @@ impl<'a> Fn<()> for Closure2<'a> {
 // 使用 `FnOnce()` 闭包作为参数
 // 在函数体内执行闭包, 用于判断自身的所有权是否转移
 fn call<F: FnOnce()>(f: F) { f() }
+
+fn boxed_closure(c: &mut Vec<Box<Fn()>>) {
+    let s = "second";
+    c.push(Box::new(|| println!("first")));
+    // 以不可变方式捕获了环境变量 `s`,
+    // 但这里需要将闭包装箱稍后在迭代器中使用
+    // 所以这里必须使用 `move` 关键字将 `s` 的所有权转移到闭包中,
+    // 因为变量 `s` 是复制语义类型, 所以该闭包捕获的是原始变量 `s` 的副本
+    c.push(Box::new(move || println!("{}", s)));
+    c.push(Box::new(|| println!("third")));
+}
+
+// `Fn` 并不受孤儿规则限制, 可有可无
+// use std::ops::Fn;
+
+// 以 trait 限定的方式实现 any 方法
+// 自定义的 Any 不同于标准库的 Any
+// 该函数的泛型 `F` 的 trait 限定为 `Fn(u32) -> bool`
+// 有别于一般的泛型限定 `<F: Fn<u32, bool>>`
+trait Any {
+    fn any<F>(&self, f: F) -> bool
+    where
+        Self: Sized,
+        F: Fn(u32) -> bool;
+}
+
+impl Any for Vec<u32> {
+    fn any<F>(&self, f: F) -> bool
+    where
+        // Sized 限定该方法不能被动态调用, 这是一种优化策略
+        Self: Sized,
+        F: Fn(u32) -> bool,
+    {
+        // 迭代传递的闭包, 依次调用
+        for &x in self {
+            if f(x) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+// 函数指针也可以作为闭包参数
+fn call_ptr<F>(closure: F) -> i32
+where
+    F: Fn(i32) -> i32,
+{
+    closure(1)
+}
+
+fn counter_ptr(i: i32) -> i32 { i + 1 }
+
+// 将闭包作为 trait 对象进行动态分发
+trait AnyDyn {
+    fn any_dyn(&self, f: &(Fn(u32) -> bool)) -> bool;
+}
+
+impl AnyDyn for Vec<u32> {
+    fn any_dyn(&self, f: &(Fn(u32) -> bool)) -> bool {
+        for &x in self.iter() {
+            if f(x) {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+// 将闭包作为函数返回值
+// `Fn` 可以多次调用
+fn square() -> Box<Fn(i32) -> i32> {
+    Box::new(|i| i * i)
+}
+
+// 指定返回闭包为 `FnOnce`
+fn square_once() -> Box<FnOnce(i32) -> i32> {
+    Box::new(|i| { i * i })
+}
+
+// impl Trait 示例
+// 在 impl 关键字后面加上了闭包 trait, 这样就可以直接返回一个 `FnOnce trait`
+fn square_impl() -> impl FnOnce(i32) -> i32 {
+    |i| { i * i }
+}
 
 fn main() {
     //
@@ -257,4 +346,49 @@ fn main() {
     let c = || println!("hhh");
     c();
     c();
+
+    // 把闭包当作 trait 对象
+    // `Box<Fn()>` 是一个 trait 对象
+    // 把闭包放到 `Box<T>` 中就可以构建一个闭包的 trait 对象
+    // trait 对象是动态分发的
+    let mut c: Vec<Box<Fn()>> = vec![];
+    boxed_closure(&mut c);
+    for f in c {
+        f();
+    }
+
+    // 以 trait 限定的方式实现 any 方法
+    let v = vec![1, 2, 3];
+    let b = v.any(|x| x == 3);
+    println!("{:?}", b);
+
+    // 函数指针也可以作为闭包参数
+    // 函数指针也实现了 `Fn`
+    let result = call_ptr(counter_ptr);
+    assert_eq!(2, result);
+
+    // 将闭包作为 trait 对象进行动态分发
+    let v = vec![1, 2, 3];
+    let b = v.any_dyn(&|x| x == 3);
+    println!("{:?}", b);
+
+    // 测试 `'static` 约束
+    let s = "hello";
+    // let c: Box<Fn() + 'static> = Box::new(move || { s; });
+    // error[E0597]: `s` does not live long enough
+    // let c: Box<Fn() + 'static> = Box::new(|| { s; });
+
+    // 将闭包作为函数返回值
+    let square_rt = square();
+    assert_eq!(4, square_rt(2));
+    assert_eq!(9, square_rt(3));
+
+    // 指定闭包返回为 `FnOnce`
+    // 内容有变动: https://github.com/ZhangHanDong/tao-of-rust-codes/issues/249
+    let square_once_rt = square_once();
+    assert_eq!(4, square_once_rt(2));
+
+    // impl Trait 示例
+    let square_impl_rt = square_impl();
+    assert_eq!(4, square_impl_rt(2));
 }

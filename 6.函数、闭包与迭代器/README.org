@@ -1,5 +1,5 @@
 * 函数、闭包与迭代器
-  语言影响或觉得人类的思维方式.org
+  语言影响或觉得人类的思维方式.
   Rust 是一门混合范式的编程语言, 有机地融合了面向对象、函数式和方向编程范式. 它
   并非将这些特性进行简单堆砌, 而是通过高度一致性的类型系统融合了这三种范式的编程
   思想. 可以通过 ~impl~ 关键字配合结构体和 trait 来实现面向对象范式中的多态和封
@@ -350,4 +350,135 @@
      | 移动         | 消耗         | Y        | FnOnce    | move             | N            |
      | 移动         | 消耗         | N        | FnOnce    | move             | N            |
      
+*** 闭包作为函数参数和返回值
+    闭包存在于很多语言中, 尤其是动态语言, 诸如 JavaScript, Python 和 Ruby 之类,
+    闭包的使用非常广泛. 但是在这些动态语言中, 闭包捕获的环境变量基本都是对象(指
+    面向对象的对象, 属于引用类型), 使用不当容易造成内存泄露. 并且在这些语言中,
+    闭包是在堆中分配的, 运行时动态分发, 由 GC 来回收内存, 调用和回收闭包都会消耗
+    多余的 CPU 时间, 更不用说使用内联技术来优化这些闭包了. 而 Rust 使用 trait 和
+    匿名结构体提供的闭包机制是非常强大的. Rust 的闭包实现受到了现代 C++ 的启发,
+    将捕获的变量放到结构体重, 这样的好处就是不会占用堆内存, 拥有更高的性能, 可以
+    使用内联技术来消除函数调用开销并实现其他关键的优化, eg: 对编译器自动实现闭包
+    的结构体进行优化等. 从而允许在任何环境(包括裸机)中使用闭包.
+
+    Rust 的闭包实现机制使得每个闭包表达式都是一个独立的类型, 这样可能有一些不变,
+    eg: 无法将不同的闭包保存到一个数组中, 但是可以通过闭包把闭包当作 trait 对象
+    来解决这个问题.
+
+    像这种在函数 ~boxed_closure~ 调用之后才会使用的闭包, 叫作 *逃逸闭包(escape
+    closure)*. 因为该闭包捕获的环境变量 "逃离" 了 ~boxed_closure~ 函数的栈帧, 所
+    以在函数栈帧销毁之后依然可用. 与之相对应, 如果是跟随函数一起调用的闭包, 则是
+    *非逃逸闭包(non-escape closure)*.
+
+**** 闭包作为函数参数
+     闭包可以作为函数参数, 这一点直接提升了 Rust 语言的抽象表达能力. 令其有了完
+     全不弱于 Ruby, Python 这类动态语言的抽象表达能力. 下面比较了 Rust 和 Ruby
+     两种语言中的 any 方法, 该方法用于按指定条件确认数组中的元素是否存在.
+     Rust 语言:
+     #+begin_src rust
+       v.any(|&x| x == 3);
+     #+end_src
+
+     Ruby 语言:
+     #+begin_src ruby
+       v.any?{|i| i == 3}
+     #+end_src
+
+     看的出来, Rust 语言和 Ruby 语言中对闭包的用法基本相似.
+
+     因为闭包属于 trait 语法糖, 所以当它被用作参数传递时, 它可以被用作泛型的
+     trait 限定, 也可以直接作为 trait 对象来使用.
+
+     动态分发比静态分发的性能低一些, 但还是晚期可以和 C++ 媲美的. 动态分发闭包在
+     实际中更加常用语回调函数(callback).
+
+     eg: Rust 的 Web 开发框架 Rocket 的中间件实现就李永乐闭包作为回调函数:
+     [[https://github.com/SergioBenitez/Rocket/blob/master/core/lib/src/fairing/ad_hoc.rs][Link]]
+     #+begin_src rust
+       pub struct AdHoc {
+           name: &'static str,
+           kind: AdHocKind,
+       }
+
+       enum AdHocKind {
+           // 包含的值类型是一个 trait 对象的闭包
+           Request(Box<dyn for<'a> Fn(&'a mut Request<'_>, &'a Data)
+               -> BoxFuture<'a, ()> + Send + Sync + 'static>),
+       }
+
+       impl AdHoc {
+           // 第二个参数为一个闭包 F, 表明接受 2 个参数
+           // 第一个是可变引用, 第二个是不可变引用, 并且是可以在线程中安全传递的
+           // `'static` 生命周期用来约束该闭包是一个 *逃逸闭包*, 只有逃逸闭包才能装箱
+           pub fn on_request<F: Send + Sync + 'static>(name: &'static str, f: F) -> AdHoc
+               where F: for<'a> Fn(&'a mut Request<'_>, &'a Data) -> BoxFuture<'a, ()>
+           {
+               AdHoc { name, kind: AdHocKind::Request(Box::new(f)) }
+           }
+       }
+
+       #[crate::async_trait]
+       impl Fairing for AdHoc {
+           async fn on_request(&self, req: &mut Request<'_>, data: &Data) {
+               // if let 语法, 如果匹配到闭包就调用
+               // 此为动态分发闭包在实际中作为回调函数的示例
+               if let AdHocKind::Request(ref callback) = self.kind {
+                   callback(req, data).await;
+               }
+           }
+       }
+     #+end_src
+
+     
+**** 闭包作为函数返回值
+     因为闭包是 trait 语法糖, 所以无法直接作为函数的返回值, 如果要把闭包作为返回
+     值, 必须使用 trait 对象.
+
+     *以下内容已过时(FnBox相关)*: [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/249][issue]]
+     # 早期的 Rust 中, 如果要调用闭包 ~Box<FnOnce(i32)->i32>~, 就必须把
+     # ~FnOnce(i32) -> i32~ 从 ~Box<T>~ 中移出来. 而此时 ~Box<T>~ 的 ~T~ 无法在编
+     # 译期确定大小, 无法转移所有权, 就报错.
+
+     # ~FnOnce~ 装箱为 ~Box<FnOnce>~ 之后, 其对应的由编译器生成的闭包结构体实例就
+     # 是 ~Box<ClosureStruct>~ 类型(假如闭包结构体名为 ClosureStruct), 该闭包结构
+     # 体实现 ~FnOnce~ 的 ~call_once~ 方法额接收者本来是 ~self~, 也就是闭包结构体
+     # 实例, 现在变成了 ~Box<self>~, 也就是装箱的闭包结构体实例. 现在想从
+     # ~Box<self>~ 里移出 ~self~ 这个闭包结构体实例来进行调用, 因为编译期无法确定
+     # 其大小, 所以无法获取 ~self~. 而对于 ~Fn~ 和 ~FnMut~ 来说, 装箱以后分别对应
+     # 的是 ~&Box<self>~ 和 ~&mut Box<self>~, 所以不会报错. 对于此问题, Rust 给出
+     # 了 ~FnBox~ 解决方案.
+
+     # #+begin_src rust
+     #   #![feature(fnbox)]
+     #   use std::boxed::FnBox;
+     #   fn square() -> Box<FnBox(i32) -> i32> {
+     #       Box::new(|i| { i * i })
+     #   }
+
+     #   fn main() {
+     #       let square = square();
+     #       assert_eq!(4, square(2));
+     #   }
+     # #+end_src
+
+     # ~Fnbox~ 是一个调用语法糖, 因为使用了 ~#[rustc_paren_sugar]~ 属性, 该 trait
+     # 实现了 ~call_box~ 方法, 第一个参数和之前的 ~Fn~, ~FnMut~, ~FnOnce~ 定义的方
+     # 法有很大的不同, 该方法的第一个参数 ~self~ 是 ~Box<Self>~ 类型.
+
+     # 理论上, ~self: SomeType<Self>~ 这种形式应该适用于任意类型(SomeType), 但实际
+     # 上, 这里只支持 ~Box<T>~. 所以, ~self:Box<Self>~ 这种类型指定会自动解引用并
+     # 移动 ~Self~ 的所有权, 因为 ~Box<T>~ 支持 DerefMove(第五章).
+
+     # ~Self:Box<self>~ 是通过调用 ~call_box~ 来间接调用 ~call_once~ 的, 因为
+     # ~Box<FnBox>~ 实现了 ~FnOnce~. 这看上去完全是一个 "曲线救国" 的方案, 所以,
+     # 在装箱时使用 ~FnBox~ 来替代 ~FnOnce~ 只是临时的解决方案, 在现在的 Rust 版本
+     # 中, 已弃用.
+
+     # 出现这种问题的根本原因在于, Rust 中的函数返回值只能出现类型. 虽然有对象可用,
+     # 但是性能上也会有所损耗. 为了解决此问题, Rust 团队提出了一个新的方案, 叫
+     # ~impl Trait~ 语法, 该方案可以让函数 *直接返回一个 trait*.
+     
+     使用 ~impl Trait~ 语法, 该方案可以让函数 *直接返回一个 trait*. 此语法代表的
+     是实现了指定 trait 的那些类型, 相当于泛型, 属于 *静态分发*.
+
      
