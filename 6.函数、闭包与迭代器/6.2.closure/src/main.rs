@@ -1,4 +1,5 @@
 #![feature(unboxed_closures, fn_traits)]
+use std::fmt::Debug;
 // error[E0635]: unknown feature `fnbox`
 // #![feature(unboxed_closures, fn_traits, fnbox)]
 
@@ -153,19 +154,71 @@ impl AnyDyn for Vec<u32> {
 
 // 将闭包作为函数返回值
 // `Fn` 可以多次调用
-fn square() -> Box<Fn(i32) -> i32> {
-    Box::new(|i| i * i)
-}
+fn square() -> Box<Fn(i32) -> i32> { Box::new(|i| i * i) }
 
 // 指定返回闭包为 `FnOnce`
-fn square_once() -> Box<FnOnce(i32) -> i32> {
-    Box::new(|i| { i * i })
-}
+fn square_once() -> Box<FnOnce(i32) -> i32> { Box::new(|i| i * i) }
 
 // impl Trait 示例
 // 在 impl 关键字后面加上了闭包 trait, 这样就可以直接返回一个 `FnOnce trait`
-fn square_impl() -> impl FnOnce(i32) -> i32 {
-    |i| { i * i }
+fn square_impl() -> impl FnOnce(i32) -> i32 { |i| i * i }
+
+// 泛型 trait 作为 trait 对象时的生命周期参数
+trait DoSomething<T> {
+    fn do_sth(&self, value: T);
+}
+
+// 为 usize 类型实现该 trait
+impl<'a, T: Debug> DoSomething<T> for &'a usize {
+    fn do_sth(&self, value: T) {
+        println!("{:?}", value);
+    }
+}
+
+// usize 是从外部引入的, 跟 foo 函数没有直接关系
+// fn foo<'a>(b: Box<DoSomething<&'a usize>>) {
+//     let s: usize = 10;
+//     // s 在调用结束被析构
+//     // &s 会成为悬垂指针
+//     b.do_sth(&s)
+// }
+
+// 使用高阶生命周期: `for<>` 语法
+fn bar<'a>(b: Box<for<'f> DoSomething<&'f usize>>) {
+    let s: usize = 10;
+    // s 在调用结束被析构
+    // &s 会成为悬垂指针
+    b.do_sth(&s)
+}
+
+// 闭包参数和返回值都是引用类型的情况
+struct Pick<F> {
+    data: (u32, u32),
+    func: F,
+}
+
+// 编译器自动补齐了生命周期参数
+// impl<F> Pick<F>
+// where
+//     F: Fn(&(u32, u32)) -> &u32,
+// {
+//     fn call(&self) -> &u32 { (self.func)(&self.data) }
+// }
+
+// 实际生命周期
+impl<F> Pick<F>
+where
+    F: for<'f> Fn(&'f (u32, u32)) -> &'f u32,
+{
+    fn call(&self) -> &u32 { (self.func)(&self.data) }
+}
+
+fn max(data: &(u32, u32)) -> &u32 {
+    if data.0 > data.1 {
+        &data.0
+    } else {
+        &data.1
+    }
 }
 
 fn main() {
@@ -391,4 +444,17 @@ fn main() {
     // impl Trait 示例
     let square_impl_rt = square_impl();
     assert_eq!(4, square_impl_rt(2));
+
+    // 泛型 trait 作为 trait 对象时的生命周期参数
+    let x = Box::new(&2usize);
+    // foo(x);
+
+    bar(x);
+
+    // 闭包参数和返回值都是引用类型的情况
+    let elm = Pick {
+        data: (3, 1),
+        func: max,
+    };
+    println!("{}", elm.call());
 }
