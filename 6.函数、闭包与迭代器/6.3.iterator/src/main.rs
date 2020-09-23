@@ -82,4 +82,24 @@ fn main() {
     let mut message = "Hello".to_string();
     message.extend(&[' ', 'R', 'u', 's', 't']);
     assert_eq!("Hello Rust", &message);
+
+    // slice 类型数组循环示例
+    // 该类型的数组使用 `for` 循环时, 并不能自动转换为迭代器, 因为并没有为 `[T]` 类型实现 `IntoIterator`
+    // 而只是为 `&'a [T]` 和 `&'a mut [T]` 类型实现了 `IntoIterator`
+    // 相应的 `into_iter()` 方法内部实际也分别调用了 `iter()` 和 `iter_mut()` 方法.
+    // 也就是说, 在 `for` 循环中使用 `&arr` 可以自动转换为迭代器, 而无需显示地调用 `iter()` 方法
+    // 用 `iter` 或 `iter_mut` 方法可以将 `slice` 类型的数组转换为 `Iter` 或 `IterMut` 迭代器
+    let arr = [1, 2, 3, 4, 5];
+    for i in arr.iter() {
+        println!("{:?}", i);
+    }
+    println!("{:?}", arr);
+
+    // 使用可变迭代器
+    let mut arr = [1, 2, 3, 4, 5];
+    for i in arr.iter_mut() {
+        *i += 1;
+    }
+
+    println!("{:?}", arr);
 }

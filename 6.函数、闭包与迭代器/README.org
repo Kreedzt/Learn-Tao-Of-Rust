@@ -656,4 +656,138 @@
     ~ExtractSizeIterator~, 但是对于某些迭代器, 开发者并不能为其实现
     ~ExactSizeIterator~, 所以需要 ~TrustedLen~ 做进一步的限定.
     
+*** IntoIterator trait 和迭代器
+    上一节介绍了 ~Iterator~ trait, 我们了解到, 如果想迭代某个集合容器中的元素,
+    必须将其转换为迭代器才可以使用. 并且在 ~for~ 循环语法糖中, 也使用了
+    ~into_iter~ 之类的方法来获取一个迭代器. 要寻找迭代器到底是什么的答案, 必须先
+    从 ~IntoIterator trait~ 开始.
+
+    第三章讲过类型转换用到的 ~From~ 和 ~Into~ 两个 trait, 它们定义了两个方法, 分
+    别是 ~from~ 和 ~into~, 这两个方法互为反操作. 对于迭代器来说, 并没有用到这两
+    个 trait, 但是这里值得注意的是, Rust 中对于 trait 的命名也是具有高度一致性的.
+
+    Rust 也提供了 ~FromIterator~ 和 ~IntoIterator~ 两个 trait, 它们也互为反操作.
+    ~FromIterator~ 可以从迭代器转换为指定类型, 而 ~IntoIterator~ 可以从指定类型
+    转换为迭代器. 关于 ~FromIterator~ 的细节会在 6.3.5 节(下 2 节)着重介绍, 这里
+    先介绍 ~IntoIterator~.
+    ~IntoIterator~ 源码示意:
+    #+begin_src rust
+      #[rustc_diagnostic_item = "IntoIterator"]
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub trait IntoIterator {
+          #[stable(feature = "rust1", since = "1.0.0")]
+          type Item;
+
+          #[stable(feature = "rust1", since = "1.0.0")]
+          type IntoIter: Iterator<Item = Self::Item>;
+
+          #[lang = "into_iter"]
+          #[stable(feature = "rust1", since = "1.0.0")]
+          fn into_iter(self) -> Self::IntoIter;
+      }
+    #+end_src
+
+    方法 ~into_iter()~ 是在该 trait 中定义的. ~into_iter~ 的参数是 ~self~, 代表
+    该方法会转移方法接受者的所有权. 同时, 该方法会返回 ~Self::IntoIter~ 类型.
+    ~Self::IntoIter~ 是关联类型, 并且指定了 trait 限定
+    ~Iterator<Item=Self::Item>~, 意味着必须是实现了 ~Iterator~ 的类型才能作为迭
+    代器.
+
+    最常用的集合容器就是 ~Vec<T>~ 类型, 它实现了 ~IntoIterator~, 可以通过
+    ~into_iter~ 方法转换为迭代器. 
+
+    #+begin_src rust
+      #[stable(feature = "rust1", since = "1.0.0")]
+      impl<T> IntoIterator for Vec<T> {
+          type Item = T;
+          type IntoIter = IntoIter<T>;
+
+          #[inline]
+          fn into_iter(self) -> IntoIter<T> {
+              unsafe {
+                  let mut me = ManuallyDrop::new(self);
+                  let begin = me.as_mut_ptr();
+                  let end = if mem::size_of::<T>() == 0 {
+                      arith_offset(begin as *const i8, me.len() as isize) as *const T
+                  } else {
+                      begin.add(me.len()) as *const T
+                  };
+                  let cap = me.buf.capacity();
+                  IntoIter {
+                      buf: NonNull::new_unchecked(begin),
+                      phantom: PhantomData,
+                      cap,
+                      ptr: begin,
+                      end,
+                  }
+              }
+          }
+      }
+    #+end_src
+
+    最终返回的是一个定义于 ~std::vec~ 模块中的 ~IntoIter~ 结构体.
+    该结构体包含下列 4 个成员字段:
+    - *Buf*: 通过 ~Vec<T>~ 类型的动态数组起始地址 ~begin~ 生成一个内部使用的
+      Shared 指针, 指向该动态数组中实际存储肚饿数据.
+    - *Cap*: 获得该动态数组的容量大小, 也就是内存占用大小
+    - *Ptr*: 指定了 ~begin~ 的值, 代表迭代器的起始指针.
+    - *End*: 代表迭代器的终点指针, 根据 ~Vec<T>~ 动态数组的长度 ~len~ 和起始地址
+      ~begin~ 计算 offset 获得
     
+    ~IntoIter~ 结构体也实现了 ~Iterator~ trait, 拥有了 ~next~, ~size_hint~ 和
+    ~count~ 三个方法,  它是一个名副其实的迭代器.
+
+    简单而言, 就是 ~Vec<T>~ 实现了 ~IntoIterator~, 因此可以通过 ~into_iter~ 方法
+    将一个 ~Vec<T>~ 类型的动态数组转换为一个 ~IntoIter~ 结构体. ~IntoIter~ 结构
+    体拥有该动态数组的全部信息, 并且获得了该动态数组的所有权. 同时, ~IntoIter~
+    结构体实现了 ~Iterator~ trait, 允许其通过 ~next~, ~size_hint~ 和 ~count~ 方
+    法对齐进行迭代处理. 所以, ~IntoIter~ 就是 ~Vec<T>~ 转换而成的迭代器.
+
+    转换 ~IntoIter~ 迭代器的代价就是 *要转移容器的所有权*, 在实际开发中, 有很多
+    情况是不能转移所有权的. 因此, Rust 还提供了另外两个迭代器专门处理这种情况,
+    分别是: *Iter* 和  *IterMut*. 这三种迭代器类型和所有权如如下对应关系:
+    - *IntoIter*: 转移所有权, 对应 ~self~.
+    - *Iter*: 获得不可变借用, 对应 ~&self~.
+    - *IterMut*: 获得可变借用, 对应 ~&mut self~.
+
+    ~Iter~ 和 ~IterMut~ 迭代器的典型应用就是 ~slice~ 类型.
+    ~Iter~ 迭代器的源码示意:
+    #+begin_src rust
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub struct Iter<'a, T: 'a> {
+          pub(super) ptr: NonNull<T>,
+          pub(super) end: *const T, // If T is a ZST, this is actually ptr+len.  This encoding is picked so that
+          // ptr == end is a quick test for the Iterator being empty, that works
+          // for both ZST and non-ZST.
+          pub(super) _marker: marker::PhantomData<&'a T>,
+      }
+    #+end_src
+
+    迭代器 ~Iter~ 中包含 ~ptr~ 和 ~end~ 指针, 均为不可变的裸指针 ~*const T~, 用
+    于计算迭代器的长度, 而 ~_marker~ 字段只是编译期标记, 是为了让生命周期参数
+    ~'a~ 有用武之地, 通过编译. 关于 ~PhantomData~ 的更多内容会在第 13 章中详细介
+    绍.
+
+    ~Iter~ 迭代器也被称为不可变迭代器, 因为它不能改变原来容器中的数据.
+    ~IterMut~ 迭代器源码示意:
+    #+begin_src rust
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub struct IterMut<'a, T: 'a> {
+          pub(super) ptr: NonNull<T>,
+          pub(super) end: *mut T, // If T is a ZST, this is actually ptr+len.  This encoding is picked so that
+          // ptr == end is a quick test for the Iterator being empty, that works
+          // for both ZST and non-ZST.
+          pub(super) _marker: marker::PhantomData<&'a mut T>,
+      }
+    #+end_src
+
+    迭代器 ~IterMut~ 中包含的 ~ptr~ 和 ~end~ 指针均为可变裸指针, 意味着此迭代器
+    可以改变容器内的值.
+
+    Rust 中的迭代器不仅有 ~IntoIter~, ~Iter~ 和 ~IterMut~ 三种. eg: ~String~ 类
+    型和 ~HashMap~ 类型均有 *Drain* 迭代器, 可以迭代删除指定范围内的值, 为字符串
+    和 ~HashMap~ 的处理提供方便. 不管 Rust 中的迭代器有多少种, 重要的是, 这些迭
+    代器的实现都遵循上述规律, 这也是 Rust 高度一致性的设计所带来的好处. 反过来,
+    不管是 ~Slice~ 类型的数组, 还是 ~Vec<T>~ 类型的动态数组, 亦或是 ~HashMap~ 等
+    容器, 迭代器模式都将其同意抽象地看待成一种数据流容器, 通过对迭代器提供的 "游
+    标" 进行增减就可以遍历流中的每一个元素.
