@@ -534,4 +534,126 @@
     ~for~ 循环是一个典型的外部迭代器, 通过它可以遍历动态数组中的元素, 并且此遍历
     过程完全可以在动态数组之外进行控制. Rust 中的 ~for~ 循环其实是一个语法糖.
 
+*** Iterator trait
+    简单来说, ~for~ 循环就是利用迭代器模式实现的一个语法糖, 它属于外部迭代器. 迭
+    代器也是 Rust 一致性的典型表现之一. 不出所料, Rust 中依然使用了 trait 来抽象
+    迭代器模式.
 
+    Iterator 源码示意:
+    #+begin_src rust
+      #[doc(spotlight)]
+      #[must_use = "iterators are lazy and do nothing unless consumed"]
+      pub trait Iterator {
+          /// The type of the elements being iterated over.
+          #[stable(feature = "rust1", since = "1.0.0")]
+          type Item;
+
+          #[lang = "next"]
+          #[stable(feature = "rust1", since = "1.0.0")]
+          fn next(&mut self) -> Option<Self::Item>;
+      }
+    #+end_src
+
+    ~Iterator~ trait 是 Rust 中对迭代器模式的抽象接口. 其中 ~next~ 方法是实现一
+    个迭代器时必须实现的方法, 基本都包含了默认实现. 该 trait 中还包含了一个关联
+    类型 ~Item~, 并且 ~next~ 方法胡返回 ~Option<Self::Item>~ 类型. ~Item~ 和
+    ~Self~ 可以看做占位类型, 它们表示实现该 trait 的具体类型的相关信息. 
+
+    通过实现该 trait, 可以创建自定义的迭代器.
+
+    对于一个真正的迭代器, 除了需要使用 next 方法获取下一个元素, 还需要知道迭代器
+    的长度信息, 这对于优化迭代器很有帮助.
+    
+    在 ~Iterator~ trait 中还提供了一个方法叫 *size_hint*.
+    ~Iterator~ trait 提供的 ~size_hint~ 方法源码示意:
+    #+begin_src rust
+      #[doc(spotlight)]
+      #[must_use = "iterators are lazy and do nothing unless consumed"]
+      pub trait Iterator {
+          /// The type of the elements being iterated over.
+          #[stable(feature = "rust1", since = "1.0.0")]
+          type Item;
+
+          #[inline]
+          #[stable(feature = "rust1", since = "1.0.0")]
+          fn size_hint(&self) -> (usize, Option<usize>) {
+              (0, None)
+          }
+      }
+    #+end_src
+
+    ~size_hint~ 方法默认实现中, 其返回类型是一个元组 ~(usize, Option<usize>)~,
+    此元组表示 *迭代器剩余长度的边界信息*. 元素中第一个元素表示下限(lower
+    bound), 第二个元素表示上线(upper bound). 第二个元素是 ~Option<usize>~ 类型,
+    代表已知上限或者上限超过 ~usize~ 的最大取值范围, eg: 无穷迭代. 此方法的默认
+    返回值 ~(0, None)~ 适用于任何迭代器.
+
+    通过 ~iter~ 方法转换为一个迭代器后, 每次调用 ~next~ 方法, 迭代器的剩余长度就
+    会减少, 直到减为 0 为止. 方法 ~size_hint~ 返回的元组上限和下限是一致的.
+
+    调用 ~iter~ 方法转换后的为一个 ~Iter~ 结构体, 本身成员就包含了起始与结束指针,
+    ~size_hint~ 方法计算两者指针距离:
+    #+begin_src rust
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub struct Iter<'a, T: 'a> {
+          pub(super) ptr: NonNull<T>,
+          pub(super) end: *const T, // If T is a ZST, this is actually ptr+len.  This encoding is picked so that
+          // ptr == end is a quick test for the Iterator being empty, that works
+          // for both ZST and non-ZST.
+          pub(super) _marker: marker::PhantomData<&'a T>,
+      }
+    #+end_src
+
+    方法 ~size_hint~ 的目的就是优化迭代器, 不要忘记 Rust 是一门系统级编程语言,
+    性能永远是一项重要的指标. 迭代器和集合容器几乎形影不离, 实际开发中经常有使用
+    迭代器来扩展集合容器的需求, 此时方法 ~size_hint~ 就派上用场了. 如果实现直到
+    准确的迭代器长度, 就可以做到精确地扩展容器容量, 从而避免不必要的容量检查, 提
+    高性能.
+
+    ~extend~ 方法是被定义于 ~Extend~ trait 中的.
+    ~Extend~ 和 ~String~ 类型实现 ~extend~ 方法的源码示意:
+    #+begin_src rust
+      #[stable(feature = "rust1", since = "1.0.0")]
+      pub trait Extend<A> {
+          #[stable(feature = "rust1", since = "1.0.0")]
+          fn extend<T: IntoIterator<Item = A>>(&mut self, iter: T);
+      }
+
+      #[stable(feature = "rust1", since = "1.0.0")]
+      impl Extend<char> for String {
+          fn extend<I: IntoIterator<Item = char>>(&mut self, iter: I) {
+              // 首先使用 `into_iter()` 方法获取了一个迭代器
+              let iterator = iter.into_iter();
+              // 然后通过迭代器的 `size_hint()` 方法获取其长度
+              let (lower_bound, _) = iterator.size_hint();
+              // 取迭代器下限, 然后调用字符串的 `reverse()` 方法, 确保扩展的字节长度大于或等于给定的值
+              // 这样做是为了避免频繁分配
+              // `reverse()` 方法只是提供了一种保障, 并不做分配空间行为
+              self.reserve(lower_bound);
+              iterator.for_each(move |c| self.push(c));
+          }
+      }
+    #+end_src
+
+    ~Extend~ trait 是一个泛型 trait, 其中定义了 ~extend~ 方法, 这是一个泛型方法,
+    其泛型参数 ~T~ 使用了 trait 限定 ~IntoIterator<Item=A>~, 这表示该泛型方法只
+    接受实现了 ~IntoIterator~ 的类型. 而 ~String~ 类型正好针对 ~char~ 类型实现了
+    该泛型 trait.
+
+    现在可以看出来 ~size_hint()~ 方法的重要性了. 为了确保该方法可以获得迭代器长
+    度的准确信息, Rust 又进入了两个 trait, 分别是 *ExactSizeIterator* 和
+    *TrustedLen*, 它们均是 ~Iterator~ 的子 trait, 均被定义于 ~std::iter~ 模块中.
+
+    ~ExtractSizeIterator~ 提供了两个额外的方法 ~len~ 和 ~is_empty~, 要实现 ~len~
+    必须先实现 ~Iterator~, 这就要求 ~size_hint~ 方法必须提供准确的迭代器长度信息.
+
+    ~TrustedLen~ 是试验性 trait, 还未正式公开, 但是在 Rust 源码内部, 它就像一个
+    标签 trait, 只要实现了 ~TrustedLen~ 的迭代器, 其 ~size_hint~ 获取的长度信息
+    均是可信任的, 有了该 trai他就完全避免了容器的容量检查, 从而提升了性能.
+
+    ~ExactSizeIterator~ 和 ~TrustedLen~ 的区别在于, 后者应用于没有实现
+    ~ExactSizeIterator~ 的大多数情况. 开发者可以根据具体的情况自定义实现
+    ~ExtractSizeIterator~, 但是对于某些迭代器, 开发者并不能为其实现
+    ~ExactSizeIterator~, 所以需要 ~TrustedLen~ 做进一步的限定.
+    
+    
