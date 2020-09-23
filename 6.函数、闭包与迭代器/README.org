@@ -791,3 +791,177 @@
     不管是 ~Slice~ 类型的数组, 还是 ~Vec<T>~ 类型的动态数组, 亦或是 ~HashMap~ 等
     容器, 迭代器模式都将其同意抽象地看待成一种数据流容器, 通过对迭代器提供的 "游
     标" 进行增减就可以遍历流中的每一个元素.
+
+*** 迭代器适配器
+    迭代器将数组容器的操作抽象为了统一的数据流.
+    
+    在软件世界中, 通过 *适配器模式* 同样可以将一个接口转换成所需的另一个接口. 适
+    配器模式能够使得接口不兼容的类型在一起工作. 适配器也有一个别名, 叫 *包装器
+    (Wrapper)*. Rust在迭代器基础上增加了适配器模式, 这就极大地增强了迭代器的表现
+    力.
+
+**** Map 适配器
+     迭代器的 ~map~ 方法创建一个新的迭代器 ~iter~. 这个迭代器就是迭代器适配器.
+     定义于 ~std::iter::Iterator~ 中的 ~map~ 方法源码:
+     #+begin_src rust
+       #[doc(spotlight)]
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       pub trait Iterator {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           type Item;
+
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn map<B, F>(self, f: F) -> Map<Self, F>
+           where
+           // 注意: 此处 `Self` 限定为 `Sized`
+           // 否则 `Self` 在编译期无法确定大小就会报错
+               Self: Sized,
+           // F 为闭包, 限定为 `FnMut(Self::Item) -> B`
+           // Self::Item 是指为实现 `Iterator` 具体类型设置的关联类型 `Item`
+               F: FnMut(Self::Item) -> B,
+           {
+               Map::new(self, f)
+           }
+       }
+     #+end_src
+
+     ~map~ 是 ~Iterator trait~ 中实现的方法, 返回的结构体 ~Map~ 就是一个迭代器适
+     配器.
+
+     迭代器适配器 ~Map~ 源码示意:
+     #+begin_src rust
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[derive(Clone)]
+       pub struct Map<I, F> {
+           iter: I,
+           f: F,
+       }
+
+       #[stable(feature = "rust1", since = "1.0.0")]
+       impl<B, I: Iterator, F> Iterator for Map<I, F>
+       where
+           F: FnMut(I::Item) -> B,
+       {
+           type Item = B;
+
+           #[inline]
+           fn next(&mut self) -> Option<B> {
+               // 注意: 调用的 `map` 方法是 `next()` 方法返回的 `Option<T>` 中实现的另一个 `map` 方法
+               // 后面的章节会介绍该方法
+               // 通过 `map()` 方法传入 `Map` 中存储的闭包, 就可以对每个元素指向相应的逻辑
+               // 最终再返回一个 `Option<T>` 类型
+               self.iter.next().map(&mut self.f)
+           }
+
+           #[inline]
+           fn size_hint(&self) -> (usize, Option<usize>) {
+               self.iter.size_hint()
+           }
+       }
+     #+end_src
+
+     看的出来, ~Map~ 是一个泛型结构体, 它只有连个字段, 一个是 *iter*, 一个 *f*,
+     分别存储的是迭代器和传入的闭包. 然后为其实现饿了 ~Iterator~ trait, ~Map~ 就
+     成为了一个地道的迭代器. 与一般迭代器不同的地方在于, 其核心方法 ~next~ 和
+     ~size_hint~ 都是调用其 *内部存储的原始迭代器* 的响应方法. 
+     
+     该元阿莫上方使用了 ~#[must_use="..."]~ 属性, 该属性是用来发出警告, 提示开发
+     者迭代器适配器是惰性的, 也就是说, 如果没有对迭代器产生任何 "消费" 行为, 它
+     是不会发生真正的迭代的. 而调用 ~next~ 方法就属于 "消费" 行为. Rust 中所有的
+     迭代器适配器都使用了 ~must_use~ 来发出警告.
+
+     执行过程: 数组 ~a~ 通过 ~into_iter()~ 方法创建了迭代器 ~IntoIter~ 并转移所
+     有权, 然后 ~IntoIter~ 再调用 ~Iterator~ trait 中实现的 ~map~ 方法, 传入闭
+     包, ~IntoIter~ 迭代器创建了一个迭代器适配 ~Map~. ~Map~ 中存储了迭代器
+     ~IntoIter~ 和传入的闭包 ~F~, 然后通过 ~next~ 方法遍历 "消费" 其元素, 依次产
+     生新的数据.
+
+**** 其他适配器
+     除了 ~Map~, Rust 标准库还提供了很多迭代器适配器, 都定义于 ~std::iter~ 模块
+     中. 下面是一个迭代器适配器常用列表.
+     - *Map*: 通过对原始迭代器中的每个元素调用指定闭包来产生一个新的迭代器
+     - *Chain*: 通过连接 2 个迭代器来茶壶跟你讲一个新的迭代器.
+     - *Cloned*: 通过拷贝原始迭代器中全部元素来创建新的迭代器.
+     - *Cycle*: 创建一个用于循环迭代的迭代器, 当迭代完毕后, 再返回第一个元素开始
+       迭代.
+     - *Enumerate*: 创建一个包含计数的迭代器, 它会返回一个元素 ~(i, val)~ 其中
+       ~i~ 是 usize 类型, 为迭代器的当前索引, ~val~ 是迭代器返回的值
+     - *Filter*: 创建一个基于谓词判断式(predicate, 山城布尔值的表达式)过滤元素的
+       迭代器.
+     - *FlatMap*: 创建一个类似 ~Map~ 的结构的迭代器, 但是其中不会含有任何嵌套.
+     - *FilterMap*: 相当于 ~Filter~ 和 ~Map~ 两个迭代器依次使用后的效果.
+     - *Fuse*: 创建一个可以快速结束遍历的迭代器. 在遍历迭代器时, 只要返回过一次
+       ~None~, 那么之后所有的遍历结果都为 ~None~. 该迭代器适配器可以用于优化.
+     - *Rev*: 创建一个可以反向遍历的迭代器.
+
+     *rev* 源码示意:
+     #+begin_src rust
+       #[doc(spotlight)]
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       pub trait Iterator {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           type Item;
+
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn rev(self) -> Rev<Self>
+           where
+               // 注意: 此处的 `Self` trait 限定中包含了一个 `DoubleEndedIterator`
+               Self: Sized + DoubleEndedIterator,
+           {
+               Rev::new(self)
+           }
+       }
+     #+end_src
+
+     *Rev* 迭代器适配器源码示意:
+     #+begin_src rust
+       #[derive(Clone, Debug)]
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub struct Rev<T> {
+           iter: T,
+       }
+
+       #[stable(feature = "rust1", since = "1.0.0")]
+       impl<I> Iterator for Rev<I>
+       where
+           I: DoubleEndedIterator,
+       {
+           // 指定了 `DoubleEndIterator` 限定. 并且将关联类型 `Item` 通过无歧义完全限定语法指定了 `Iterator` 中的关联类型.
+           type Item = <I as Iterator>::Item;
+
+           #[inline]
+           fn next(&mut self) -> Option<<I as Iterator>::Item> {
+               // 此处调用了 `Rec` 中存储的迭代器的 `next_back` 方法. 这个方法实际上是在 `DoubleEndedIterator` 中定义的
+               self.iter.next_back()
+           }
+       }
+     #+end_src
+
+     ~Rev~ 泛型结构体中只有一个成员字段 ~iter~, 只用来保存迭代器. 在为其实现
+     ~Iterator~ 时, 指定了 ~DoubleEndIterator~ 限定. 并且将关联类型 ~Item~ 通过
+     无歧义完全限定语法指定了 ~Iterator~ 中的关联类型.
+
+     ~DoubleEndIterator~ 源码示意:
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub trait DoubleEndedIterator: Iterator {
+           fn next_back(&mut self) -> Option<Self::Item>;
+       }
+     #+end_src
+     
+     看得出来, ~DoubleEndIterator~ 是 ~Iterator~ 的子 trait, 这样定义实际是为了
+     扩展 ~Iterator~. ~next_back~ 和 ~next~ 方法签名非常相似, 反转遍历正是基于此
+     方法来实现的.
+
+     在执行 ~next_back()~ 方法之后, 迭代器的 "游标" *还是会回到上一次* ~next~ 执
+     行的位置继续执行 ~next~, 这也是该方法命名为 ~next_back~ 的原因.
+
+     至此, 我们就知道了 ~Rev~ 迭代器适配器的工作机制: 在 ~next~ 迭代中, 调用
+     ~next_back()~ 方法. 只有实现了 ~DoubleEndIterator~ 的迭代器才有
+     ~next_back()~ 方法, 也就是说, 只有实现了 ~DoubleEndIterator~ 的迭代器才能调
+     用 ~Iterator::rev~ 方法进行反向遍历.
+     

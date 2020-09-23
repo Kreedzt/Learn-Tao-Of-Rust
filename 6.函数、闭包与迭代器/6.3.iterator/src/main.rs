@@ -102,4 +102,49 @@ fn main() {
     }
 
     println!("{:?}", arr);
+
+    // map 方法示例
+    let a = [1, 2, 3];
+    let mut iter = a.into_iter().map(|x| 2 * x);
+    println!("{:?}", a);
+    assert_eq!(iter.next(), Some(2));
+    assert_eq!(iter.next(), Some(4));
+    assert_eq!(iter.next(), Some(6));
+    assert_eq!(iter.next(), None);
+
+    // 部分迭代器适配器使用示例
+    let arr1 = [1, 2, 3, 4, 5];
+    let c1 = arr1.iter().map(|x| 2 * x).collect::<Vec<i32>>();
+    assert_eq!(&c1[..], [2, 4, 6, 8, 10]);
+    
+    let arr2 = ["1", "2", "3", "h"];
+    let c2 = arr2.iter().filter_map(|x| x.parse().ok()).collect::<Vec<i32>>();
+    assert_eq!(&c2[..], [1, 2, 3]);
+
+    let arr3 = ['a', 'b', 'c'];
+    for (idx, val) in arr3.iter().enumerate() {
+        println!("idx: {:?}, val: {}", idx, val.to_uppercase());
+    }
+
+    // rev 方法示例
+    let a = [1, 2, 3];
+    let mut iter = a.iter().rev();
+    assert_eq!(iter.next(), Some(&3));
+    assert_eq!(iter.next(), Some(&2));
+    assert_eq!(iter.next(), Some(&1));
+    assert_eq!(iter.next(), None);
+
+    // `next_back` 方法使用示例
+    let numbers = vec![1, 2, 3, 4, 5, 6];
+    let mut iter = numbers.into_iter();
+    assert_eq!(Some(1), iter.next());
+    // 两次反向遍历
+    assert_eq!(Some(6), iter.next_back());
+    assert_eq!(Some(5), iter.next_back());
+    // 执行
+    assert_eq!(Some(2), iter.next());
+    assert_eq!(Some(3), iter.next());
+    assert_eq!(Some(4), iter.next());
+    assert_eq!(None, iter.next());
+    assert_eq!(None, iter.next_back());
 }
