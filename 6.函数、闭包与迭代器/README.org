@@ -965,3 +965,126 @@
      ~next_back()~ 方法, 也就是说, 只有实现了 ~DoubleEndIterator~ 的迭代器才能调
      用 ~Iterator::rev~ 方法进行反向遍历.
      
+*** 消费器
+   Rust 中的迭代器都是惰性的, 也就是说, 它们不会自动发生遍历行为, 除非调用
+   ~next~ 方法去消费其中的数据. 最直接消费迭代器数据的方法就是使用 ~for~ 循环,
+   前面可以了解到, ~for~ 循环会隐式地调用迭代器的 ~next~ 方法, 从而达到循环的目
+   的.
+
+   为了编程的便利性和更高的性能, Rust 也提供了 ~for~ 循环之外的用于消费迭代器内
+   数据的方法, 它们叫做消费器(Consumer). 下面列出了 Rust 标准库
+   ~std::iter::Iterator~ 中实现的常用消费器:
+   - *any*: 其功能类似我们实现的 ~any~ 方法的功能, 可以查找容器中是否存在满足条
+     件的元素
+   - *fold*: 来源于函数式编程语言. 该方法接受 2 个参数, 第一个为初始值, 第二个为
+     带有两个参数的闭包. 其中闭包的第一个参数被称为累加器, 它会将闭包每次迭代执
+     行的结果进行累计, 并最终作为 ~fold~ 方法的返回值. 在其他语言中, 也被用作
+     ~reduce~ 或 ~inject~
+   - *collect*: 专门用来将迭代器转换为的指定集合类型. eg:
+     ~collect::<Vec<i32>>()~ 这样的 turbofish 语法为其指定了类型, 最终迭代器就会
+     被转换为 ~Vec<i32>~ 这样的数组. 因此, 它也被称为 "收集器".
+
+**** any 和 fold
+     ~any~ 和 ~fold~ 的源码示意:
+     #+begin_src rust
+       #[doc(spotlight)]
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       pub trait Iterator {
+           /// The type of the elements being iterated over.
+           #[stable(feature = "rust1", since = "1.0.0")]
+           type Item;
+
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn fold<B, F>(mut self, init: B, mut f: F) -> B
+           where
+               Self: Sized,
+               F: FnMut(B, Self::Item) -> B,
+           {
+               let mut accum = init;
+               while let Some(x) = self.next() {
+                   accum = f(accum, x);
+               }
+               accum
+           }
+
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn any<F>(&mut self, f: F) -> bool
+           where
+               Self: Sized,
+               F: FnMut(Self::Item) -> bool,
+           {
+               #[inline]
+               fn check<T>(mut f: impl FnMut(T) -> bool) -> impl FnMut((), T) -> ControlFlow<(), ()> {
+                   move |(), x| {
+                       if f(x) { ControlFlow::BREAK } else { ControlFlow::CONTINUE }
+                   }
+               }
+
+               self.try_fold((), check(f)) == ControlFlow::BREAK
+           }
+       }
+     #+end_src
+
+     看得出来, ~any~ 和 ~fold~ 的内部都包含了一个 ~for~ 循环, 它们实际上是通过
+     ~for~ 循环来实现内部迭代器的. 内部迭代器的特点是: 一次遍历到底, 不支持
+     ~return~, ~break~ 或 ~continue~ 操作, 因此可以避免一些相应的检查, 更有利于
+     底层 LLVM 的优化.
+     
+     Rust 除了提供 ~any~ 和 ~fold~ 两个消费器(内部迭代器), 还提供了其他的内部迭
+     代器, eg: ~all~, ~for_each~ 和 ~position~ 等, 可以在 ~std::iter::Iterator~
+     的文档中找到它们的用法和源码. 在众多的消费器中, 最特殊的应该算 ~collect~ 消
+     费器了.
+
+**** collect 消费器
+     通过签名的几个示例我们已经知道, ~collect~ 消费器有 "收集" 功能, 在语义上可
+     以理解为将迭代器中的元素收集到指定的集合容器中, eg: 前面示例中所看到的
+     ~collect::<Vec<i32>>()~, 就是将迭代器元素收集到 ~Vec<i32>~ 类型的动态数组容
+     器中. 通过 turbofish 语法还可以指定其他的集合容器, eg:
+     ~collect::<HashMap<i32, i32>>()~ 等.
+     
+     ~collect~ 源码示意
+     #+begin_src rust
+       #[doc(spotlight)]
+       #[must_use = "iterators are lazy and do nothing unless consumed"]
+       pub trait Iterator {
+           /// The type of the elements being iterated over.
+           #[stable(feature = "rust1", since = "1.0.0")]
+           type Item;
+
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           #[must_use = "if you really need to exhaust the iterator, consider `.for_each(drop)` instead"]
+           fn collect<B: FromIterator<Self::Item>>(self) -> B
+           where
+               Self: Sized,
+           {
+               FromIterator::from_iter(self)
+           }
+       }
+     #+end_src
+
+     ~FromIterator~ 和 ~IntoIterator~ 是互为逆操作的两个 trait.
+
+     ~FromIterator~ 源码示意:
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[rustc_on_unimplemented(
+           message = "a value of type `{Self}` cannot be built from an iterator \
+                      over elements of type `{A}`",
+           label = "value of type `{Self}` cannot be built from `std::iter::Iterator<Item={A}>`"
+       )]
+       pub trait FromIterator<A>: Sized {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self;
+       }
+     #+end_src
+
+     该 trait 只定义了唯一的泛型方法 ~from_iter~, 它的方法签名中使用了 trait 限
+     定 ~IntoIterator<Item=A>~, 表示只有实现了 ~IntoIterator~ 的类型才可以作为其
+     参数. 集合容器只需要实现该 trait, 就可以拥有使用 ~collect~ 消费器手机迭代器
+     元素的能力.
+
+     这里需要注意的是: 直接调用 ~MyVec::from_iter()~ 方法和使用 ~collect~ 方法的
+     效果是一样的.

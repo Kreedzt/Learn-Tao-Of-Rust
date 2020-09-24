@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 // 自定义的内部迭代器
 trait InIterator<T: Copy> {
     fn each<F: Fn(T) -> T>(&mut self, f: F);
@@ -32,6 +34,25 @@ impl Iterator for Counter {
     }
 }
 
+#[derive(Debug)]
+struct MyVec(Vec<i32>);
+
+impl MyVec {
+    fn new() -> MyVec { MyVec(Vec::new()) }
+
+    fn add(&mut self, elem: i32) { self.0.push(elem); }
+}
+
+impl FromIterator<i32> for MyVec {
+    fn from_iter<T: IntoIterator<Item = i32>>(iter: T) -> Self {
+        let mut c = MyVec::new();
+        for i in iter {
+            c.add(i);
+        }
+        c
+    }
+}
+
 fn main() {
     // 自定义的内部迭代器
     let mut v = vec![1, 2, 3];
@@ -53,7 +74,7 @@ fn main() {
             match _iterator.next() {
                 Some(i) => {
                     println!("{}", i);
-                },
+                }
                 None => break,
             }
         }
@@ -116,9 +137,12 @@ fn main() {
     let arr1 = [1, 2, 3, 4, 5];
     let c1 = arr1.iter().map(|x| 2 * x).collect::<Vec<i32>>();
     assert_eq!(&c1[..], [2, 4, 6, 8, 10]);
-    
+
     let arr2 = ["1", "2", "3", "h"];
-    let c2 = arr2.iter().filter_map(|x| x.parse().ok()).collect::<Vec<i32>>();
+    let c2 = arr2
+        .iter()
+        .filter_map(|x| x.parse().ok())
+        .collect::<Vec<i32>>();
     assert_eq!(&c2[..], [1, 2, 3]);
 
     let arr3 = ['a', 'b', 'c'];
@@ -147,4 +171,55 @@ fn main() {
     assert_eq!(Some(4), iter.next());
     assert_eq!(None, iter.next());
     assert_eq!(None, iter.next_back());
+
+    // `any` 和 `fold` 的使用示例
+    let a = [1, 2, 3];
+    // 注意: `any` 和 `fold` 传入的闭包参数是一个引用
+    // 使用数组的 `iter` 方法, 创建的迭代器是 `Iter` 类型
+    // 该类型的 `next` 方法返回的是 `Option<&[T]>` 或 `Option<&mut[T]>` 的值
+    // 而 `for` 循环实际上是一个语法糖, 会自动调用迭代器的 `next` 方法
+    // `for` 循环中的循环变量则是通过模式匹配,
+    // 从 `next` 返回的 `Option<&[T]>` 或 `Option<&mut[T]>` 类型中获取 `&[T]` 或 `Option<&mut [T]>` 类型中获取 `&[T]` 或 `&mut [T]` 类型的值的
+    // 所以参数仅引用类型
+    assert_eq!(a.iter().any(|&x| x != 2), true);
+    let sum = a.iter().fold(0, |acc, x| acc + x);
+    assert_eq!(sum, 6);
+
+    // `any` 方法示意
+    let arr = [1, 2, 3];
+    let result1 = arr.iter().any(|&x| x != 2);
+    let result2 = arr.iter().any(|x| *x != 2);
+    // error[E0277]: can't compare `&{integer}` with `{integer}`
+    // let result2 = arr.iter().any(|x| x != 2);
+    assert_eq!(result1, true);
+
+    // 使用 `fold` 对数组求和示例
+    let arr = vec![1, 2, 3];
+    let sum1 = arr.iter().fold(0, |acc, x| acc + x);
+    let sum2 = arr.iter().fold(0, |acc, x| acc + *x);
+    let sum3 = arr.iter().fold(0, |acc, &x| acc + x);
+    // `into_iter` 会获取所有权, 且迭代器的 `next` 方法返回的是 `Option<T>` 类型
+    // 循环拿到的是值, 不是引用
+    let sum4 = arr.into_iter().fold(0, |acc, x| acc + x);
+    // error[E0308]: mismatched types
+    // let sum4 = arr.into_iter().fold(0, |acc, &x| acc + x);
+    // error[E0614]: type `{integer}` cannot be dereferenced
+    // let sum4 = arr.into_iter().fold(0, |acc, x| acc + *x);
+    assert_eq!(sum1, 6);
+    assert_eq!(sum2, 6);
+    assert_eq!(sum3, 6);
+    assert_eq!(sum4, 6);
+
+    // 自定义集合 `MyVec` 实现 `FromIterator`
+    let iter = (0..5).into_iter();
+    let c = MyVec::from_iter(iter);
+    assert_eq!(c.0, vec![0, 1, 2, 3, 4]);
+
+    let iter = (0..5).into_iter();
+    let c: MyVec = iter.collect();
+    assert_eq!(c.0, vec![0, 1, 2, 3, 4]);
+
+    let iter = (0..5).into_iter();
+    let c = iter.collect::<MyVec>();
+    assert_eq!(c.0, vec![0, 1, 2, 3, 4]);
 }
