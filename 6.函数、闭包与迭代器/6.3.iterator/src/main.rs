@@ -1,4 +1,5 @@
 use std::iter::FromIterator;
+use itertools::Itertools;
 
 // 自定义的内部迭代器
 trait InIterator<T: Copy> {
@@ -34,6 +35,7 @@ impl Iterator for Counter {
     }
 }
 
+// 自定义集合实现 `FromIterator`
 #[derive(Debug)]
 struct MyVec(Vec<i32>);
 
@@ -52,6 +54,60 @@ impl FromIterator<i32> for MyVec {
         c
     }
 }
+
+// 实现自定义迭代器
+#[derive(Debug)]
+#[must_use = "Iterator adaptors are lazy "]
+pub struct Step<I> {
+    iter: I,
+    skip: usize,
+}
+
+// 为 `Step` 实现 `Iterator`
+impl<I> Iterator for Step<I>
+where
+    I: Iterator,
+{
+    // 这里需要将关联类型 `Item` 指定为原迭代器的关联类型 `I::Item`
+    type Item = I::Item;
+    // 实现 `next` 和 `size_hint` 方法时, 必须符合 `Iterator trait` 中 `next` 方法签名规定的参数和返回值类型.
+    // 其中 `next` 方法必须按指定的步数来迭代, 所以此处 `next` 方法实现的时候
+    // 需要根据 `Step` 适配器中的 `skip` 字段来跳到相应的元素.
+    // eg: 当 `skip` 是 2 的时候, 调用 `next` 时则需要跳过第一个元素, 直接跳到第二个元素
+    fn next(&mut self) -> Option<I::Item> {
+        let elt = self.iter.next();
+        if self.skip > 0 {
+            // 此处使用了 `nth` 方法, 该方法会直接返回迭代器中的第 `n` 个元素
+            self.iter.nth(self.skip - 1);
+        }
+        elt
+    }
+}
+
+// 创建 `step` 方法来产生 `Step` 迭代器
+// 第一个参数为迭代器, 第二个为指定步数
+pub fn step<I>(iter: I, step: usize) -> Step<I>
+where
+    I: Iterator,
+{
+    assert!(step != 0);
+    Step {
+        iter,
+        skip: step - 1,
+    }
+}
+
+// 为所有的迭代器实现 step 方法
+pub trait IterExt: Iterator {
+    fn my_step(self, n: usize) -> Step<Self>
+    where
+        Self: Sized,
+    {
+        step(self, n)
+    }
+}
+
+impl<T: ?Sized> IterExt for T where T: Iterator {}
 
 fn main() {
     // 自定义的内部迭代器
@@ -222,4 +278,26 @@ fn main() {
     let iter = (0..5).into_iter();
     let c = iter.collect::<MyVec>();
     assert_eq!(c.0, vec![0, 1, 2, 3, 4]);
+
+    // 应用迭代器适配器 `Step`
+    let arr = [1, 2, 3, 4, 5, 6];
+    // [1, 3, 5] => ...
+    let sum = arr.iter().my_step(2).fold(0, |acc, x| acc + x);
+    assert_eq!(9, sum);
+
+    // 使用 `Iteratortools`
+    let data = vec![1, 2, 3, 3, 4, 6, 7, 9];
+    // 仅拿到位置 mod 3 为 0 的数据的迭代器
+    let r = data.iter().positions(|v| v % 3 == 0);
+    let rev_r = data.iter().positions(|v| v % 3 == 0).rev();
+
+    for i in r {
+        println!("{:?}", i);
+    }
+
+    println!("====");
+
+    for i in rev_r {
+        println!("{:?}", i);
+    }
 }

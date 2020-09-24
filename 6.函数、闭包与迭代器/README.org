@@ -1088,3 +1088,88 @@
 
      这里需要注意的是: 直接调用 ~MyVec::from_iter()~ 方法和使用 ~collect~ 方法的
      效果是一样的.
+
+*** 自定义迭代器适配器
+    得益于 Rust 的高度一致性, Rust 中可以很容易地自定义迭代器适配器.
+
+    实现 ~next~ 和 ~size_hint~ 方法时, 必须符合 ~Iterator trait~ 中 ~next~ 方法
+    签名规定的参数和返回值类型.
+
+    实际上, Rust 社区很很多第三方包(crate)也提供了迭代器适配器, 其中最常用的是
+    ~Itertools~.
+    #+begin_src rust
+      #[derive(Clone)]
+      #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
+      pub struct Positions<I, F> {
+          iter: I, // 存储迭代器
+          f: F, // 存储闭包
+          count: usize, // 计数
+      }
+
+      /// Create a new `Positions` iterator.
+      pub fn positions<I, F>(iter: I, f: F) -> Positions<I, F>
+      where I: Iterator,
+            F: FnMut(I::Item) -> bool,
+      {
+          // 生成 `Positions` 实例
+          Positions {
+              iter,
+              f,
+              count: 0
+          }
+      }
+
+      impl<I, F> Iterator for Positions<I, F>
+      where I: Iterator,
+            F: FnMut(I::Item) -> bool,
+      {
+          type Item = usize;
+
+          fn next(&mut self) -> Option<Self::Item> {
+              while let Some(v) = self.iter.next() {
+                  let i = self.count;
+                  // 每次迭代都会使用 `count` 来进行计数并执行闭包
+                  // 如果满足闭包条件则返回相应计数, 就是所得索引值
+                  self.count = i + 1;
+                  if (self.f)(v) {
+                      return Some(i);
+                  }
+              }
+              None
+          }
+
+          fn size_hint(&self) -> (usize, Option<usize>) {
+              (0, self.iter.size_hint().1)
+          }
+      }
+
+      pub trait Itertools : Iterator {
+          fn positions<P>(self, predicate: P) -> Positions<Self, P>
+          where Self: Sized,
+                P: FnMut(Self::Item) -> bool,
+          {
+              adaptors::positions(self, predicate)
+          }
+      }
+
+
+      // 支持反向遍历和确定迭代器大小
+      impl<I, F> DoubleEndedIterator for Positions<I, F>
+      where I: DoubleEndedIterator + ExactSizeIterator,
+            F: FnMut(I::Item) -> bool,
+      {
+          fn next_back(&mut self) -> Option<Self::Item> {
+              while let Some(v) = self.iter.next_back() {
+                  if (self.f)(v) {
+                      return Some(self.count + self.iter.len())
+                  }
+              }
+              None
+          }
+      }
+
+      // 扩展 Iterator
+      impl<T: ?Sized> Itertools for T where T: Iterator { }
+    #+end_src
+
+    
