@@ -149,6 +149,7 @@ impl ColoredString {
             has_wrote = true;
         }
 
+        // 牢记此时的 `self` 类型为 `&self`
         if let Some(ref fgcolor) = self.fgcolor {
             if has_wrote {
                 res.push(';');
@@ -156,6 +157,15 @@ impl ColoredString {
 
             res.push_str(fgcolor.to_fg_str());
         }
+
+        // 上述 `ref` 与以下代码等价
+        // if let Some(fgcolor) = &(self.fgcolor) {
+        //     if has_wrote {
+        //         res.push(';');
+        //     }
+
+        //     res.push_str(fgcolor.to_fg_str());
+        // }
 
         res.push('m');
         res

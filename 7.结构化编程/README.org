@@ -287,3 +287,119 @@
 
      当变量 ~move~ 到闭包之前先被借用时, 需要等待其离开作用域归还所有权之后, 才
      能被移动到 ~move~ 闭包中, 因此变量被捕获的顺序就会变化.
+
+*** 补充说明: ref 关键字
+    ref 关键字与 ~&~ 引用运算符的用法区别: [[https://users.rust-lang.org/t/ref-keyword-versus/18818/14][社区讨论]], [[https://doc.rust-lang.org/stable/rust-by-example/scope/borrow/ref.html][examples]].
+    [[https://stackoverflow.com/questions/58292554/what-can-ref-do-that-references-couldnt][功能区别]]
+    
+    以下等价:
+    #+begin_src rust
+      struct Foo(String);
+
+      fn bar(foo: &Foo) {
+          // &String
+          let Foo(ref: foo2) = *foo;
+
+          // &String
+          let Foo(foo2) = &foo;
+
+          let foo = &foo.0;
+      }
+    #+end_src
+
+    执行链接: [[https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=7f2786e6838cfc19986bf19d802c6794][play]]
+    #+begin_src rust
+      #[derive(Clone, Copy)]
+      struct Point { x: i32, y: i32 }
+
+      fn main() {
+          let c = 'Q';
+
+          // 以下代码等价
+          let ref ref_c1 = c;
+          let ref_c2 = &c;
+
+          println!("ref_c1 equals ref_c2: {}", *ref_c1 == *ref_c2);
+
+          let point = Point { x: 0, y: 0 };
+
+          // ref 可用于解构结构体
+          let _copy_of_x = {
+              // 引用
+              let Point { x: ref ref_to_x, y: _ } = point;
+
+              // 解引用
+              *ref_to_x
+          };
+
+          // A mutable copy of `point`
+          let mut mutable_point = point;
+
+          {
+              let Point { x: _, y: ref mut mut_ref_to_y } = mutable_point;
+              // 看似等价
+              let mut_ref_to_y = &mut mutable_point.y;
+
+              *mut_ref_to_y = 1;
+          }
+
+          println!("point is ({}, {})", point.x, point.y);
+          println!("mutable_point is ({}, {})", mutable_point.x, mutable_point.y);
+
+          // A mutable tuple that includes a pointer
+          let mut mutable_tuple = (Box::new(5u32), 3u32);
+
+          {
+              let (_, ref mut last) = mutable_tuple;
+              // 看似等价
+              let last = &mut mutable_tuple.1;
+              *last = 2u32;
+          }
+
+          println!("tuple is {:?}", mutable_tuple);
+      }
+
+    #+end_src
+
+** 常用设计模式
+   有了 trait , 结构体和枚举体这三驾马车, 我们就可以自由地编写容易扩展的 Rust 代
+   码了. 
+
+   自 GoF 四人组([[https://en.wikipedia.org/wiki/Software_design_pattern][wiki]])提出 23 种设计模式的概念至今已经超过 20 年了, 虽然设计模式
+   最初是基于面向对象语言提出的, 但是经过这 20 多年的发展, 设计模式已经超越了面
+   向对象语言的范畴. 设计模式所阐述的思想被广泛应用于各种语言及其功能项目中. 设
+   计模式的思想提供涵盖了下面 4 点:
+   - 针对结构编程
+   - 组合优于继承
+   - 分离变和不变
+   - 委托代替继承
+
+   可以说, Rust 语言本身的设计就非常符合这 4 点思想. trait 可以强制地实现针对结
+   构编程; 泛型和 trait 限定可替代继承多态, 基于代数数据类型的结构体在没有继承的
+   情况下也一样可以更自由地构造各种类型; 类型系统天生分离了变与不变; 常用的迭代
+   器就是利用委托来代替继承的.
+
+   Rust 是一门已经实现自举的语言, 其内部实现也用到了很多设计模式. eg: 第 6 章学
+   到的迭代器就包含了委托模式和迭代器模式的思想. 在 Rust 的其他诸多项目中也大量
+   使用了设计模式. 接下来会依次介绍 Rust 编程中常用的另外几个设计模式.
+
+*** 建造者模式
+    Rust 这门语言没哟㧈构造函数, 这主要是出于对类型安全的考量. 
+
+    以一个结构体为例来说明: 如果要构造结构体的实例, 有时候要需要一些模式值, 像
+    Java 这种语言会提供默认的构造函数, 并可以将值初始化为 0, 而对于 C++ 来说, 就
+    有可能引起未定义行为, 这属于类型不安全的问题. Rust 并没有类似 Java 那样的默
+    认机制, 所以 Rust 没有提供构造函数, 而是可以像函数式编程语言那样直接绑定值来
+    构造类型实例. 所以, 就需要一些设计模式来辅助完成复杂类实例的构造工作, 而建造
+    者模式比较适合这种应用场景, 这也是 Rust 中大量使用这种模式的原因.
+
+    *建造者模式(Builder Pattern)* 是 Rust 中最常用 的设计模式之一. 建造者模式是
+    指使用多个简单的对象一步步构建一个复杂对象的模式. 该模式的主要思想就是将变和
+    不可变分离. 对于一个复杂对象, 肯定会有不变的部分, 也有变化的部分, 将它们分离
+    开, 然后依次构建.
+
+    在 Rust 标准库中有一个用于创建进程的结构体 ~std::process::Command~, 它使用了
+    创建者模式.
+    
+*** 访问者模式  
+    
