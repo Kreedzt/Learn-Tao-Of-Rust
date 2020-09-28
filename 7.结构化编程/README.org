@@ -402,4 +402,221 @@
     创建者模式.
     
 *** 访问者模式  
+    Rust 中另一个重要的模式是 *访问者模式(Visitor Pattern)*. 访问者模式用于将数
+    据结构和作用域结构上的操作解耦. Rust 语言自身在解析抽象语法树时就用到了访问
+    者模式.
+
+**** Rust 编译器源码中的访问者模式
+     Rust 解析抽象语法树示意:
+     #+begin_src rust
+       mod ast {
+           pub enum Stmt {
+               Expr(Expr),
+               Let(Name, Expr)
+           }
+
+           pub struct Name {
+               value: String
+           }
+
+           pub enum Expr {
+               IntLit(i64),
+               Add(Box<Expr>, Box<Expr>),
+               Sub(Box<Expr>, Box<Expr>)
+           }
+       }
+
+       mod visit {
+           use ast::*;
+
+           pub trait Visitor<T> {
+               fn visit_name(&mut self, n: &Name) -> T;
+               fn visit_stmt(&mut self, n: &Stmt) -> T;
+               fn visit_expr(&mut self, e: &Expr) -> T;
+           }
+       }
+     #+end_src
+
+     以上只展示了部分代码. 这段代码是用于 *构建抽象语法树* 的. Rust 词法中包含语
+     句、标识符名称和表达式, 分别被定义于 *ast* 模块中的 ~Stmt~, ~Name~ 和
+     ~Expr~ 来表示. 关键字 ~mod~ 用于定义一个模块, 在第 10 章会介绍更多关于模块
+     的内容.
+
+     这些包含在 ast 模块中的类型虽然各不相同, 但是它们整体是在描述同一个抽象语法
+     树结构的. 因此, 整个抽象语法树就是一个异构的结构, 其中的每个语法节点都是不
+     同的类型, 对于这些节点的操作也各不相同. 语法节点基本是确定好的, 变化不会太
+     大, 但是对节点的操作需要经常改动, eg: Rust 现在正处于开发期, 会定时添加一些
+     新特性. 使用访问者模式将不可变的节点和变化的操作分离开, 可以方便后续扩展.
+     所以, 访问者模式 *一般包含 2 个层次*:
+
+     - 定义需要操作的元素
+     - 定义相关的操作
+
+     对于上述代码来说, ~ast~ 模块定义了抽象语法树中的全部节点相关的数据结构, 而
+     ~visit~ 模块中的 Visitor trait 则定义了相关的操作. 所以在解析语法树的时候,
+     只需要为解析器实现相关的 visit 方法即可操作相关节点.
+
+     #+begin_src rust
+       use visit::*;
+       use ast::*;
+
+       struct Interpreter;
+
+       impl Visitor<i64> for Interpreter {
+           fn visit_name(&mut self, n: &Name) -> i64 { panic!() }
+           fn visit_stmt(&mut self, s: &Stmt) -> i64 {
+               match *s {
+                   Stmt::Expr(ref e) => self.visit_expr(e),
+                   Stmt:::Let(..) => unimplemented!(),
+               }
+           }
+           fn visit_expr(&mut self, e: &Expr) -> i64 {
+               match *e {
+                   Expr::IntLit(n) => n,
+                   Expr::Add(ref lhs, ref rhs) =>
+                       self.visit_expr(lhs) + self.visit_expr(rhs),
+                   Expr::Sub(ref lhs, ref rhs) =>
+                       self.visit_expr(lhs) - self.visit_expr(rhs)
+               }
+           }
+       }
+     #+end_src
+
+     为解析器 Interpreter 实现了 Visitor, 对不同的语法树节点有不同的操作方法. 访
+     问者模式优雅地把节点数据解雇与其解析操作分离开了, 为后续自由灵活地解析语法
+     节点提供了方便.
+     
+**** Serde 库中的访问者模式
+     访问者模式的另一个景点的应用场景是第三方库 *Serde*, 它是一个对 Rust 数据结
+     构进行序列化和反序列化的高效框架. Serde 的命名就是分别从 *Serialize(序列化)*
+     和 *Deserialize(反序列化)* 两个单词中拿出 *Ser* 和 *De* 两部分组合而成的.
+
+     Serde 之所以称为框架, 是因为其定义了统一的数据模型, 并通过访问者模式开放了
+     序列化和反序列化的操作接口. Serde 目前已经支持了很多种数据格式, 包括 JSON、
+     XML、BinCode、YAML、MessagePack、TOML 等.
+
+     Serde 中序列化和反序列化都使用了访问者模式, 这里只以反序列化为说明. Serde
+     中自定义了一些类型对应 Rust 中可能出现的所有数据类型, 包括基本的原生类型、
+     String、option、unit、seq、tuple、tuple_struct、map、struct 等. eg: option
+     代表 ~Option<T>~ 类型, tuple_struct 代表元组结构体, seq 代表线性队列(eg:
+     ~Vec<T>~ 之类的集合), 而 map 则代表 k-v 结构的容器(eg: ~HashMap<K, V>~). 这
+     些异构的类型构成了 Serde 框架的统一的数据模型.
+
+     Serde 提供了 3 个 trait, 源码如下:
+     #+begin_src rust
+       pub trait Deserialize<'de>: Sized {
+           fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+           where
+               D: Deserializer<'de>;
+       }
+
+       pub trait Deserializer<'de>: Sized {
+           type Error: Error;
     
+           fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+           where
+               V: Visitor<'de>;
+           fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+           where
+               V: Visitor<'de>;
+       }
+
+       pub trait Visitor<'de>: Sized {
+           type Value;
+
+           fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+           where
+               E: Error,
+           {
+               Err(Error::invalid_type(Unexpected::Bool(v), &self))
+           }
+
+           fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+           where
+               E: Error,
+           {
+               Err(Error::invalid_type(Unexpected::Str(v), &self))
+           }
+       }
+     #+end_src
+
+     通过 ~Deserializer~ 和 ~Visitor~ 两个 trait 定义了反序列化开放的操作接口.
+     这就是 Serde 框架利用访问者模式所定义的主要内容: *统一的数据模型和开放的操
+     作接口*. 然后再针对不同的数据格式实现不同的访问者操作方法.
+
+     以 JSON 格式数据反序列化来说明. 第三方库 serde_json 是基于 Serde 实现的
+     JSON 解析库, 该库将 JSON 格式中出现的数据类型统一定义为一个 Value 枚举体.
+     如下所示:
+     #+begin_src rust
+       #[derive(Clone, Eq, PartialEq)]
+       pub enum Value {
+           Null,
+           Bool(bool),
+           Number(Number),
+           String(String),
+           Array(Vec<Value>),
+           Object(Map<String, Value>),
+       }
+     #+end_src
+
+     以上定义的枚举 ~Value~ 包含了 6 种枚举值, 基本上涵盖了 JSON 数据格式中所有
+     数据类型. 接下来, serde_json 实现了 Serde 框架开放的 trait 接口:
+     ~Deserialize~, ~Visitor~ 和 ~Deserializer~, 如下所示:
+     #+begin_src rust
+       impl<'de> Deserialize<'de> for Value {
+           // 反序列化
+           #[inline]
+           fn deserialize<D>(deserializer: D) -> Result<Value, D::Error>
+           where
+               D: serde::Deserializer<'de>,
+           {
+               // 定义及认购提
+               struct ValueVisitor;
+
+               // 实现 `Visitor` -- 委托模式
+               impl<'de> Visitor<'de> for ValueVisitor {
+                   type Value = Value;
+
+                   fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+                       Ok(Value::Bool(value))
+                   }
+               }
+
+               deserializer.deserialize_any(ValueVisitor)
+           }
+       }
+
+       impl<'de> serde::Deserializer<'de> for Value {
+           type Error = Error;
+
+           #[inline]
+           // 专门用于自定义类型反序列化
+           // eg: Value 类型
+           // 通过一个 `match` 匹配枚举体 `Value` 中定义的 6 种类型, 分别调用
+           fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Error>
+           where
+               V: Visitor<'de>,
+           {
+               match self {
+                   Value::Null => visitor.visit_unit(),
+                   Value::Bool(v) => visitor.visit_bool(v),
+                   Value::Number(n) => n.deserialize_any(visitor),
+                   #[cfg(any(feature = "std", feature = "alloc"))]
+                   Value::String(v) => visitor.visit_string(v),
+                   Value::Array(v) => visit_array(v, visitor),
+                   Value::Object(v) => visit_object(v, visitor),
+               }
+           }
+       }
+     #+end_src
+
+     serde_json 实现了 ~Deserialize~, 其中定义的 ~deserialize~ 方法正是最终用于
+     反序列化的方法. 在 ~deserialize~ 方法中定义了结构体 ~ValueVisitor~, 并为其
+     实现了 ~Visitor~, 这是一种委托模式.
+
+     serde_json 也为 ~Value~ 实现了 ~serde::Deserializer~. 其中
+     ~deserialize_any~ 方法是专门用于自定义反序列化的.
+
+     访问者模式将 *数据结构和操作分离开*, 为代码的扩展提供了极大地便利. 
+
+
