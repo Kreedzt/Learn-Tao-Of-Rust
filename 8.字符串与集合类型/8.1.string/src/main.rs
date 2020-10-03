@@ -80,4 +80,46 @@ fn main() {
     assert!(!'藏'.is_numeric());
     // 用于转义  \t, \r, \n
     println!("{}", '\r'.escape_default());
+
+
+    // 组成 `String` 类型的三部分
+    let mut a = String::from("fooα");
+    // 堆中字节序列的地址
+    println!("{:p}", a.as_ptr());
+    // 字符串变量在栈上的地址
+    println!("{:p}", &a);
+    assert_eq!(a.len(), 5);
+    // 5
+    println!("capacity: {}", a.capacity());
+    // 再次分配容量
+    a.reserve(10);
+    assert_eq!(a.capacity(), 15);
+
+    
+    // 创建字符串的各种方法示例
+    let string: String = String::new();
+    assert_eq!("", string);
+
+    let string: String = String::from("hello rust");
+    assert_eq!("hello rust", string);
+
+    // 容量只是存储空间(eg: 堆)的一种刻度
+    // 实际申请的堆内存空间为每个字符的字节大小 * 容量值
+    let string: String = String::with_capacity(20);
+    assert_eq!("", string);
+
+    let str: &'static str = "the tao of rust";
+    let string: String = str.chars().filter(|c| !c.is_whitespace()).collect();
+    assert_eq!("thetaoofrust", string);
+
+    // 与后者性能相差无几
+    // 利用 `&str` 切片字节序列生成新的 `String` 字符串
+    let string: String = str.to_owned();
+    assert_eq!("the tao of rust", string);
+
+    // 与前者性能相差无几
+    // 对 `String::from` 的包装
+    let string: String = str.to_string();
+    let str: &str = &string[11..15];
+    assert_eq!("rust", str);
 }
