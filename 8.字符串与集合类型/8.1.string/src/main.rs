@@ -122,4 +122,45 @@ fn main() {
     let string: String = str.to_string();
     let str: &str = &string[11..15];
     assert_eq!("rust", str);
+
+    // 使用 chars 和 bytes 方法示例
+    let str = "borös";
+    // 按码位迭代
+    let mut chars = str.chars();
+    assert_eq!(Some('b'), chars.next());
+    assert_eq!(Some('o'), chars.next());
+    assert_eq!(Some('r'), chars.next());
+    assert_eq!(Some('ö'), chars.next());
+    assert_eq!(Some('s'), chars.next());
+
+    // 按字节迭代
+    let mut bytes = str.bytes();
+    // 返回字符串字节长度, 而非字符长度
+    assert_eq!(6, str.len());
+    assert_eq!(Some(98), bytes.next());
+    assert_eq!(Some(111), bytes.next());
+    assert_eq!(Some(114), bytes.next());
+    assert_eq!(Some(195), bytes.next());
+    assert_eq!(Some(182), bytes.next());
+    assert_eq!(Some(115), bytes.next());
+
+    // 使用 `get` 和 `get_mut` 方法示例
+    let mut v = String::from("borös");
+    assert_eq!(Some("b"), v.get(0..1));
+    assert_eq!(Some("ö"), v.get(3..5));
+    assert_eq!(Some("orös"), v.get(1..));
+    assert!(v.get_mut(4..).is_none());
+    // 判断是否合法的字符边界
+    assert!(!v.is_char_boundary(4));
+    assert!(v.get_mut(..8).is_none());
+    assert!(v.get_mut(..42).is_none());
+
+    // 使用 `split_at` 方法示例
+    let s = "Per Martin-Löf";
+    let (first, last) = s.split_at(12);
+    assert_eq!("Per Martin-L", first);
+    assert_eq!("öf", last);
+    // thread 'main' panicked at 'byte index 13 is not a char boundary; it is inside 'ö' (bytes 12..14) of `Per Martin-Löf`', C:\Users\Ken Zhao\.
+    // 13 为字节序列中间位置, 为非法的字符边界.
+    // let (first, last) = s.split_at(13);
 }
