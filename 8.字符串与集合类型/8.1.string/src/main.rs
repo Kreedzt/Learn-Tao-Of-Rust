@@ -1,3 +1,4 @@
+use std::ascii::AsciiExt;
 use std::char;
 use std::str;
 
@@ -81,7 +82,6 @@ fn main() {
     // 用于转义  \t, \r, \n
     println!("{}", '\r'.escape_default());
 
-
     // 组成 `String` 类型的三部分
     let mut a = String::from("fooα");
     // 堆中字节序列的地址
@@ -95,7 +95,6 @@ fn main() {
     a.reserve(10);
     assert_eq!(a.capacity(), 15);
 
-    
     // 创建字符串的各种方法示例
     let string: String = String::new();
     assert_eq!("", string);
@@ -163,4 +162,99 @@ fn main() {
     // thread 'main' panicked at 'byte index 13 is not a char boundary; it is inside 'ö' (bytes 12..14) of `Per Martin-Löf`', C:\Users\Ken Zhao\.
     // 13 为字节序列中间位置, 为非法的字符边界.
     // let (first, last) = s.split_at(13);
+
+    // 使用 `push` 和 `push_str` 方法示例
+    let mut hello = String::from("Hello, ");
+    hello.push('R');
+    hello.push_str("ust!");
+    assert_eq!("Hello, Rust!", hello);
+
+    // 使用 `Extend` 迭代器追加字符串
+    let mut message = String::from("hello");
+    message.extend([',', 'r', 'u'].iter());
+    // `chars` 返回 `Chars` 迭代器
+    message.extend("st ".chars());
+    // `split_whiteSpace` 返回 `SplitWhitespace` 迭代器
+    message.extend("w o r l d".split_whitespace());
+    assert_eq!("hello,rust world", &message);
+
+    // 使用 `insert` 和 `insert_str` 方法插入字符串
+    let mut s = String::with_capacity(3);
+    // 参数为插入的位置和字符
+    s.insert(0, 'f');
+    s.insert(1, 'o');
+    s.insert(2, 'o');
+    // 参数为插入的位置和字符串切片
+    s.insert_str(0, "bar");
+    assert_eq!("barfoo", s);
+
+    // 使用 `"+"` 和 `"+="` 连接字符串
+    let left = "the tao".to_string();
+    let mut right = "Rust".to_string();
+    // 操作符右边的字符串必须为切片类型, `String` 实现了 Deref trait
+    // 自动解引用为 str
+    assert_eq!(left + " of " + &right, "the tao of Rust");
+    right += "!";
+    assert_eq!(right, "Rust!");
+
+    // 尝试使用索引来操作字符串
+    let s = String::from("fooαbar");
+    // 将字符串转为 `Vec<u8>` 序列
+    let mut result = s.into_bytes();
+    (0..result.len()).for_each(|i| {
+        if i % 2 == 0 {
+            // 只针对 ascii 字符, 无法针对多字节字符
+            result[i] = result[i].to_ascii_lowercase();
+        } else {
+            result[i] = result[i].to_ascii_uppercase();
+        }
+    });
+    // 将 `Vec<u8>` 转换为 `Result<String, FromUtf8Error>`
+    assert_eq!("fOoαBaR", String::from_utf8(result).unwrap());
+
+    // 按字符迭代来处理字符串
+    let s = String::from("fooαbar");
+    let s: String = s
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i % 2 == 0 {
+                c.to_lowercase().to_string()
+            } else {
+                c.to_uppercase().to_string()
+            }
+        })
+        .collect();
+    assert_eq!("fOoΑbAr", s);
+
+
+    // 删除字符串示例
+    let mut s = String::from("hαllo");
+    // 删除字符串中某个位置的字符
+    // 注意: `remove` 也是按字节处理字符串的, 如果给定的索引位置不是合法的字符边界, 那么线程就会崩溃
+    s.remove(3);
+    assert_eq!("hαlo", s);
+    // 将结尾字符依次弹出, 并返回该字符
+    assert_eq!(Some('o'), s.pop());
+    assert_eq!(Some('l'), s.pop());
+    assert_eq!(Some('α'), s.pop());
+    assert_eq!("h", s);
+    
+    let mut s = String::from("hαllo");
+    // 接受索引位置为参数, 将此索引位置开始到结尾的字符全部移除
+    // 该方法也是按字节操作的, 注意线程崩溃问题
+    s.truncate(3);
+    assert_eq!("hα", s);
+    // 作用同 `truncate` 传 0
+    s.clear();
+    assert_eq!(s, "");
+
+    let mut s = String::from("α is alpha, βis beta");
+    let beta_offset = s.find('β').unwrap_or(s.len());
+    // 移除指定范围的字符
+    let t: String = s.drain(..beta_offset).collect();
+    assert_eq!(t, "α is alpha, ");
+    assert_eq!(s, "βis beta");
+    s.drain(..);
+    assert_eq!(s, "");
 }
