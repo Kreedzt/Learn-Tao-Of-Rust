@@ -186,3 +186,383 @@
 **** 删除字符串
      ~remove~. ~truncate~ 方法使用时需要注意: 此类方法是按字节操作, 可能引发线程
      崩溃
+
+*** 字符串的查找
+    在 Rust 标准库中 *并没有* 提供正则表达式的支持, 这是因为正则表达式算是外部
+    DSL, 如果直接将其引入标准库中, 则会破坏 Rust 的一致性. 因为线程的正则表达式
+    引擎都是其他语言实现的, eg: C 语言. 除非完全使用 Rust 来实现. 目前 Rust 支持
+    的正则表达式引擎是官方实现的第三方包 *regex*, 未来是否会归为标准库中, 不得而
+    知. 虽然 Rust 在标准库中不提供正则表达式支持, 但它提供了另外的字符串匹配功能
+    供开发者使用, 一共包含 20 个方法.
+
+    这 20 个方法涵盖了以下几种字符串匹配操作:
+    - *存在性判断*: ~contains~, ~starts_with~, ~ends_with~.
+    - *位置匹配*: ~find~, ~rfind~
+    - *分割字符串*: ~split~, ~rsplit~, ~split_terminator~, ~rsplit_terminator~,
+      ~splitn~, ~rsplitn~.
+    - *捕获匹配*: ~matches~, ~rmatches~, ~match_indices~, ~rmatch_indices~.
+    - *删除匹配*: ~trim_matches~, ~trim_left_matches~, ~trim_right_matches~.
+    - *替代匹配*: ~replace~, ~replacen~
+
+**** 存在性判断
+     ~contains~ 返回 bool 类型
+
+     ~std::str~ 模块中 ~contains~ 方法源码:
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[inline]
+       // 参数限定为 `Pattern<'a>`
+       pub fn contains<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool {
+           pat.is_contained_in(self)
+       }
+     #+end_src
+     
+     ~Pattern<'a>~ 是一个专门用于搜索 ~&'a str~ 字符串的模式 trait. Rust 中的
+     ~char~ 类型, ~String~, ~&str~, ~&&str~, ~&[char]~ 类型, 以及 ~FnMut(char)
+     -> bool~ 的闭包均已经实现了该 trait. 因此, ~contains~ 才可以接收不同类型的
+     值作为参数.
+
+     ~starts_with~ 和 ~ends_with~ 与 ~contains~ 一样, 也可以接收实现了
+     ~Pattern<'a>~ 的类型作为参数. 为了方便描述, 暂且称这种参数为 ~pattern~ 参
+     数. ~starts_with~ 和 ~ends_with~ 分别用于判断指定的 ~pattern~ 参数是否为字
+     符串的起始边界和结束边界.
+
+**** 位置匹配
+     如果想查找指定字符串中字符所在的位置, 则可以使用 ~find~ 方法
+     ~find~ 方法默认是从左向右按字符进行遍历查找的, 最终返回 ~Option<usize>~ 类
+     型的位置索引, ~rfind~ 表示从右向左来匹配.
+
+**** 分割字符串
+     如果想通过指定的模式来分割字符串, 则可以使用 ~split~ 系列方法.
+
+     ~splitn~ 的第一个参数代表分割的数组长度.
+
+     ~split_terminator~ 会把分割结果数组最后一位的空字符串去掉.(仅去掉最后, 不去
+     掉起始: [[https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=8bcdbceb5973c8190a88f17917879e06][PLayground]])
+
+     
+**** 捕获匹配
+     通常通过正则表达式来完成在字符串中匹配符合条件的字符.
+     在 Rust 中, 通过 ~pattern~ 参数配合 ~matches~ 系列方法可以获得同样的效果.
+
+     ~match_indices~ 方法返回的结果是元组数组, 其中元组的第一个元素代表匹配字符
+     的位置索引.
+
+     从方法的命名来看, indices 为 index 的复数形式, 在语义上就指名了匹配结果会包
+     含索引. 在标准库中有不少以 "_indices" 结尾的方法名, 在语义上都表明其返回值
+     会包含索引.
+
+**** 删除匹配
+     在 ~std::str~ 模块中提供了 ~trim~ 系列方法, 可以删除字符串两头的指定字符.
+
+     ~trim~ 系列方法可以删除字符串两头的空格, 制表符(\t) 和换行符(\n).
+
+     Rust 还提供了 ~trim_matches~ 系列方法, 支持 ~pattern~ 参数, 可以指定自定义
+     的删除规则.
+
+**** 替代匹配
+     使用 ~trim_matches~ 系列方法可以满足基本的字符串删除匹配要求, 但是其质量去
+     除字符串两头的字符, 无法去除字符串内部包含的字符. 可以通过 ~replace~ 系列方
+     法来实现此需求.
+
+**** 字符串的匹配模式原理
+     Rust 提供的这些字符串匹配方法看似繁多, 但实际上其背后是一套统一的迭代器适配
+     器. 我们从 ~matches~ 方法说起:
+
+     ~matches~ 方法源码
+     #+begin_src rust
+       #[stable(feature = "str_matches", since = "1.2.0")]
+       #[inline]
+       pub fn matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> Matches<'a, P> {
+           Matches(MatchesInternal(pat.into_searcher(self)))
+       }
+     #+end_src
+
+     该方法返回的是 ~Matches<'a, P>~ 类型, 它是一个结构体, 也是一个迭代器.
+     源码如下:
+     #+begin_src rust
+       // generate_pattern_iterators! {
+       //     forward:
+       //     /// Created with the method [`matches`].
+       //     ///
+       //     /// [`matches`]: str::matches
+       //     struct Matches;
+       //     reverse:
+       //     /// Created with the method [`rmatches`].
+       //     ///
+       //     /// [`rmatches`]: str::rmatches
+       //     struct RMatches;
+       //     stability:
+       //     #[stable(feature = "str_matches", since = "1.2.0")]
+       //     internal:
+       //     MatchesInternal yielding (&'a str);
+       //     delegate double ended;
+       // }
+
+       struct MatchesInternal<'a, P: Pattern<'a>>(P::Searcher);
+       // 通过以上宏生成
+       pub struct Matches<'a, P: Pattern<'a>>(MatchesInternal<'a, P>);
+       impl<'a, P: Pattern<'a>> Iterator for Matches<'a, P> {
+           type Item = &'a str;
+           fn next(&mut self) -> Option<&'a str> {
+               self.0.next()
+           }
+       }
+     #+end_src
+     
+     ~Matches~ 结构体是一个元组结构体, 也就是 NewType 模式, 它包装了
+     ~MatchesInternal~ 结构体. 为 ~Matches~ 实现了 ~Iterator~, 它就成为迭代器.
+     在 ~next~ 方法中, 它又调用了 ~MatchesInternal~ 结构体的 ~next~ 方法.
+
+     ~MatchesInternal~ 实现 ~next~ 和 ~next_back~ 方法的源码:
+     #+begin_src rust
+       impl<'a, P: Pattern<'a>> MatchesInternal<'a, P> {
+           #[inline]
+           fn next(&mut self) -> Option<&'a str> {
+               // SAFETY: `Searcher` guarantees that `start` and `end` lie on unicode boundaries.
+               self.0.next_match().map(|(a, b)| unsafe {
+                   // Indices are known to be on utf8 boundaries
+                   self.0.haystack().get_unchecked(a..b)
+               })
+           }
+
+           #[inline]
+           fn next_back(&mut self) -> Option<&'a str>
+           where
+               P::Searcher: ReverseSearcher<'a>,
+           {
+               // SAFETY: `Searcher` guarantees that `start` and `end` lie on unicode boundaries.
+               self.0.next_match_back().map(|(a, b)| unsafe {
+                   // Indices are known to be on utf8 boundaries
+                   self.0.haystack().get_unchecked(a..b)
+               })
+           }
+       }
+     #+end_src
+
+     ~MatchesInternal~ 也是一个 NewType 模式的结构体, 它包装了 ~P::Searcher~. 其
+     中 ~next~ 和 ~next_back~ 方法内部分别调用了 ~P::Searcher~ 的 ~next_match~
+     和 ~next_match_back~ 方法, 最终返回 ~Map~ 迭代器供将来 ~collect~ 使用.
+
+     注意 ~Pattern<'a>~, 这个 trait 实际上是字符串匹配算法的抽象.
+
+     ~Pattern<'a>~ 和 ~SearchStep~ 定义:
+     #+begin_src rust
+       #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+       pub enum SearchStep {
+           // 代表匹配到的索引范围: hasystack[0..3]
+           Match(usize, usize),
+           // 代表未匹配到的索引范围
+           Reject(usize, usize),
+           // 代表匹配完毕
+           Done,
+       }
+
+       pub trait Pattern<'a>: Sized {
+           type Searcher: Searcher<'a>;
+
+           // 通过 `into_searcher` 方法得到具体的搜索类型
+           // `haystack` 为原字符串
+           fn into_searcher(self, haystack: &'a str) -> Self::Searcher;
+
+           #[inline]
+           // 用于判断 `needle` 串是否包含在 `haystack` 串中
+           fn is_contained_in(self, haystack: &'a str) -> bool {
+               self.into_searcher(haystack).next_match().is_some()
+           }
+
+           #[inline]
+           // 前缀: 除最后一个字符之外的其余字符的组合
+           fn is_prefix_of(self, haystack: &'a str) -> bool {
+               matches!(self.into_searcher(haystack).next(), SearchStep::Match(0, _))
+           }
+
+           #[inline]
+           // 后缀: 除最后一个字符串之外的全部尾部字符的组合
+           fn is_suffix_of(self, haystack: &'a str) -> bool
+           where
+               Self::Searcher: ReverseSearcher<'a>,
+           {
+               matches!(self.into_searcher(haystack).next_back(), SearchStep::Match(_, j) if haystack.len() == j)
+           }
+       }
+     #+end_src
+
+     通常 haystack 代表原字符串, needle 代表子串.
+
+     在 KMP 算法中, 前缀和后缀用于产生部分匹配表, 而在 Rust 中这里使用的字符匹配
+     算法并非 KMP, 而是它的变种 *双向(Two-Way)字符串匹配算法*, 该算法的优势在于
+     拥有常量级的空间复杂度. 它和 KMP 的共同点在于其时间复杂度也是 O(n), 并且都
+     用到了前缀和后缀的概念.
+
+     ~Searcher<'a>~ 源码:
+     #+begin_src rust
+       pub unsafe trait Searcher<'a> {
+           // 用于传递 `haystack` 串
+           fn haystack(&self) -> &'a str;
+
+           // 用于返回 `SearchStep`
+           // eg: needle: "aaaa", haystack: "abaaaaab"
+           // 此时 next 方法可以nadao: [Reject(0, 1), Reject(1, 2), Match(2, 5), Reject(5, 8)]
+           fn next(&mut self) -> SearchStep;
+
+           #[inline]
+           // 用于匹配 `SearchStep` 来返回最终匹配的索引范围
+           fn next_match(&mut self) -> Option<(usize, usize)> {
+               loop {
+                   match self.next() {
+                       SearchStep::Match(a, b) => return Some((a, b)),
+                       SearchStep::Done => return None,
+                       _ => continue,
+                   }
+               }
+           }
+
+           #[inline]
+           // 用于匹配 `SearchStep` 来返回最终未匹配的索引范围
+           fn next_reject(&mut self) -> Option<(usize, usize)> {
+               loop {
+                   match self.next() {
+                       SearchStep::Reject(a, b) => return Some((a, b)),
+                       SearchStep::Done => return None,
+                       _ => continue,
+                   }
+               }
+           }
+       }
+     #+end_src
+     
+     该 ~Searcher<'a>~ 类似于迭代器, 包含了 4 个方法.
+
+     为 ~&'a str~ 类型实现 ~Pattern<'a>~ 的源码:
+     #+begin_src rust
+       impl<'a, 'b> Pattern<'a> for &'b str {
+           type Searcher = StrSearcher<'a, 'b>;
+
+           #[inline]
+           // 生成用于匹配 `&'a str` 类型字符串的搜索类型
+           fn into_searcher(self, haystack: &'a str) -> StrSearcher<'a, 'b> {
+               StrSearcher::new(haystack, self)
+           }
+
+           #[inline]
+           fn is_prefix_of(self, haystack: &'a str) -> bool {
+               haystack.as_bytes().starts_with(self.as_bytes())
+           }
+
+           #[inline]
+           fn is_suffix_of(self, haystack: &'a str) -> bool {
+               haystack.as_bytes().ends_with(self.as_bytes())
+           }
+       }
+
+       #[derive(Clone, Debug)]
+       /// Associated type for `<&str as Pattern<'a>>::Searcher`.
+       pub struct StrSearcher<'a, 'b> {
+           // 原字符串
+           haystack: &'a str,
+           // 子串
+           needle: &'b str,
+
+           // 枚举体
+           searcher: StrSearcherImpl,
+       }
+
+       #[derive(Clone, Debug)]
+       enum StrSearcherImpl {
+           // 空字符串情况
+           Empty(EmptyNeedle),
+           // 非空字符串情况
+           // `TwoWaySearcher` 即为 *双向字符串匹配算法的具体实现*
+           TwoWay(TwoWaySearcher),
+       }
+
+
+       unsafe impl<'a, 'b> Searcher<'a> for StrSearcher<'a, 'b> {
+           #[inline]
+           fn haystack(&self) -> &'a str {
+               self.haystack
+           }
+
+           #[inline]
+           fn next(&mut self) -> SearchStep {
+               match self.searcher {
+                   StrSearcherImpl::Empty(ref mut searcher) => {
+                       // empty needle rejects every char and matches every empty string between them
+                       let is_match = searcher.is_match_fw;
+                       searcher.is_match_fw = !searcher.is_match_fw;
+                       let pos = searcher.position;
+                       match self.haystack[pos..].chars().next() {
+                           _ if is_match => SearchStep::Match(pos, pos),
+                           None => SearchStep::Done,
+                           Some(ch) => {
+                               searcher.position += ch.len_utf8();
+                               SearchStep::Reject(pos, searcher.position)
+                           }
+                       }
+                   }
+                   StrSearcherImpl::TwoWay(ref mut searcher) => {
+                       // TwoWaySearcher produces valid *Match* indices that split at char boundaries
+                       // as long as it does correct matching and that haystack and needle are
+                       // valid UTF-8
+                       // *Rejects* from the algorithm can fall on any indices, but we will walk them
+                       // manually to the next character boundary, so that they are utf-8 safe.
+                       if searcher.position == self.haystack.len() {
+                           return SearchStep::Done;
+                       }
+                       let is_long = searcher.memory == usize::MAX;
+                       match searcher.next::<RejectAndMatch>(
+                           self.haystack.as_bytes(),
+                           self.needle.as_bytes(),
+                           is_long,
+                       ) {
+                           SearchStep::Reject(a, mut b) => {
+                               // skip to next char boundary
+                               while !self.haystack.is_char_boundary(b) {
+                                   b += 1;
+                               }
+                               searcher.position = cmp::max(b, searcher.position);
+                               SearchStep::Reject(a, b)
+                           }
+                           otherwise => otherwise,
+                       }
+                   }
+               }
+           }
+
+           #[inline]
+           fn next_match(&mut self) -> Option<(usize, usize)> {
+               match self.searcher {
+                   StrSearcherImpl::Empty(..) => loop {
+                       match self.next() {
+                           SearchStep::Match(a, b) => return Some((a, b)),
+                           SearchStep::Done => return None,
+                           SearchStep::Reject(..) => {}
+                       }
+                   },
+                   StrSearcherImpl::TwoWay(ref mut searcher) => {
+                       let is_long = searcher.memory == usize::MAX;
+                       // write out `true` and `false` cases to encourage the compiler
+                       // to specialize the two cases separately.
+                       if is_long {
+                           searcher.next::<MatchOnly>(
+                               self.haystack.as_bytes(),
+                               self.needle.as_bytes(),
+                               true,
+                           )
+                       } else {
+                           searcher.next::<MatchOnly>(
+                               self.haystack.as_bytes(),
+                               self.needle.as_bytes(),
+                               false,
+                           )
+                       }
+                   }
+               }
+           }
+       }
+     #+end_src
+
+     以上就是 *字符串匹配算法的背后机制*, 使用 ~Pattern<'a>~, ~Searcher<'a>~ 和
+     ~SearchStep~ 来抽象字符串匹配算法, 然后 *利用迭代器模式* 进行检索. 这里也是
+     Rust 一致性的体现.

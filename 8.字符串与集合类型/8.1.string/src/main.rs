@@ -227,7 +227,6 @@ fn main() {
         .collect();
     assert_eq!("fOoΑbAr", s);
 
-
     // 删除字符串示例
     let mut s = String::from("hαllo");
     // 删除字符串中某个位置的字符
@@ -239,7 +238,7 @@ fn main() {
     assert_eq!(Some('l'), s.pop());
     assert_eq!(Some('α'), s.pop());
     assert_eq!("h", s);
-    
+
     let mut s = String::from("hαllo");
     // 接受索引位置为参数, 将此索引位置开始到结尾的字符全部移除
     // 该方法也是按字节操作的, 注意线程崩溃问题
@@ -257,4 +256,121 @@ fn main() {
     assert_eq!(s, "βis beta");
     s.drain(..);
     assert_eq!(s, "");
+
+    // 存在性判断
+    let bananas = "bananas";
+    // char
+    assert!(bananas.contains('a'));
+    // &str
+    assert!(bananas.contains("an"));
+    // fn pointer
+    assert!(bananas.contains(char::is_lowercase));
+    assert!(bananas.starts_with('b'));
+    assert!(!bananas.ends_with("nana"));
+
+    // 使用 `find` 方法查找字符位置
+    let s = "Löwe 老虎 Léopard";
+    assert_eq!(s.find('w'), Some(3));
+    assert_eq!(s.find('老'), Some(6));
+    assert_eq!(s.find('虎'), Some(9));
+    assert_eq!(s.find("é"), Some(14));
+    assert_eq!(s.find("Léopard"), Some(13));
+    // 仅仅查询方式不一样, 结果一样, 都是正序索引
+    assert_eq!(s.rfind('L'), Some(13));
+    assert_eq!(s.find(char::is_whitespace), Some(5));
+    assert_eq!(s.find(char::is_lowercase), Some(1));
+
+    // `split` 系列方法使用示例
+    let s = "Löwe 虎 Léopard";
+    let v = s
+        // 通过码位范围锁定中文字符
+        // U+4E00 ~ U+9FA5
+        .split(|c| (c as u32) >= (0x4E00 as u32) && (c as u32) <= (0x9FA5 as u32))
+        .collect::<Vec<&str>>();
+    assert_eq!(v, ["Löwe ", " Léopard"]);
+
+    let v = "abc1defXghi"
+        .split(|c| c == '1' || c == 'X')
+        .collect::<Vec<&str>>();
+    assert_eq!(v, ["abc", "def", "ghi"]);
+
+    let v = "Mary had a little lambda"
+        // n 代表分割的数组长度
+        .splitn(3, ' ')
+        .collect::<Vec<&str>>();
+    assert_eq!(v, ["Mary", "had", "a little lambda"]);
+
+    let v = "A.B.".split(".").collect::<Vec<&str>>();
+    assert_eq!(v, ["A", "B", ""]);
+
+    let v = "A.B.".split_terminator('.').collect::<Vec<&str>>();
+    assert_eq!(v, ["A", "B"]);
+
+    let v = "A..B..".split(".").collect::<Vec<&str>>();
+    assert_eq!(v, ["A", "", "B", "", ""]);
+
+    let v = "A..B..".split_terminator(".").collect::<Vec<&str>>();
+    assert_eq!(v, ["A", "", "B", ""]);
+
+    // `matches` 系列方法使用示例
+    let v = "abcXXXabcYYYabc".matches("abc").collect::<Vec<&str>>();
+    assert_eq!(v, ["abc", "abc", "abc"]);
+
+    let v = "1abc2abc3"
+        // 因反向匹配, 所以得到的迭代器也是反向的
+        .rmatches(char::is_numeric)
+        .collect::<Vec<&str>>();
+    assert_eq!(v, ["3", "2", "1"]);
+
+    let v = "abcXXXabcYYYabc"
+        // 返回元组数组
+        .match_indices("abc")
+        .collect::<Vec<_>>();
+    assert_eq!(v, [(0, "abc"), (6, "abc"), (12, "abc")]);
+
+    let v = "abcXXXabcYYYabc".rmatch_indices("abc").collect::<Vec<_>>();
+    assert_eq!(v, [(12, "abc"), (6, "abc"), (0, "abc")]);
+
+    // `trim` 系列方法使用示例
+    let s = " Hello\tworld\t";
+    assert_eq!("Hello\tworld", s.trim());
+    assert_eq!("Hello\tworld\t", s.trim_left());
+    assert_eq!(" Hello\tworld", s.trim_right());
+
+    // `trim_matches` 系列方法使用示例
+    // 警告: 此处示例代码有误, 已改动
+    assert_eq!("Hello\tworld\t".trim_matches('\t'), "Hello\tworld");
+    assert_eq!("11foo1bar11".trim_matches('1'), "foo1bar");
+    assert_eq!("123foo1bar123".trim_matches(char::is_numeric), "foo1bar");
+
+    let x: &[char] = &['1', '2'];
+    assert_eq!("12foo1bar12".trim_matches(x), "foo1bar");
+    assert_eq!(
+        "1foo1barXX".trim_matches(|c| c == '1' || c == 'X'),
+        "foo1bar"
+    );
+    assert_eq!("11foo1bar11".trim_left_matches('1'), "foo1bar11");
+    assert_eq!(
+        "123foo1bar123".trim_left_matches(char::is_numeric),
+        "foo1bar123"
+    );
+
+    let x: &[char] = &['1', '2'];
+    assert_eq!("12foo1bar12".trim_left_matches(x), "foo1bar12");
+    // 警告:　有改动
+    assert_eq!("1fooX".trim_left_matches(|c| c == '1' || c == 'X'), "fooX");
+
+    // `replace` 系列方法使用示例
+    let s = "Hello\tworld\t";
+    assert_eq!("Hello world ", s.replace("\t", " "));
+    assert_eq!("Hello world", s.replace("\t", " ").trim());
+
+    let s = "this is old old 123";
+    assert_eq!("this is new new 123", s.replace("old", "new"));
+    assert_eq!("this is new old 123", s.replacen("old", "new", 1));
+    assert_eq!("this is ald ald 123", s.replacen('o', "a", 3));
+    assert_eq!(
+        "this is old old new23",
+        s.replacen(char::is_numeric, "new", 1)
+    );
 }
