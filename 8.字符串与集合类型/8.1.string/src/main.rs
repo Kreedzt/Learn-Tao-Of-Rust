@@ -1,6 +1,57 @@
 use std::ascii::AsciiExt;
 use std::char;
+use std::fmt::{self, Display, Formatter};
+use std::num::ParseIntError;
 use std::str;
+use std::str::FromStr;
+
+#[derive(Debug, PartialEq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+// 为自定义结构体实现 `FromStr`
+impl FromStr for Point {
+    type Err = ParseIntError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let coords = s
+            .trim_matches(|p| p == '{' || p == '}')
+            .split(",")
+            .collect::<Vec<&str>>();
+
+        let x_fromstr = coords[0].parse::<i32>()?;
+        let y_fromstr = coords[1].parse::<i32>()?;
+        Ok(Point {
+            x: x_fromstr,
+            y: y_fromstr,
+        })
+    }
+}
+
+// 对自定义类型 `format!` 格式化为字符串
+struct City {
+    name: &'static str,
+    lat: f32,
+    lon: f32,
+}
+
+impl Display for City {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let lat_c = if self.lat >= 0.0 { 'N' } else { 'S' };
+        let lon_c = if self.lon >= 0.0 { 'E' } else { 'W' };
+
+        write!(
+            f,
+            "{}: {:.3}°{} {:.3}°{}",
+            self.name,
+            self.lat.abs(),
+            lat_c,
+            self.lon.abs(),
+            lon_c
+        )
+    }
+}
 
 fn main() {
     // 字符串编码示例
@@ -373,4 +424,72 @@ fn main() {
         "this is old old new23",
         s.replacen(char::is_numeric, "new", 1)
     );
+
+    // `parse` 方法使用示例
+    // 该方法是为泛型方法, 需要指定类型
+    let four: u32 = "4".parse().unwrap();
+    assert_eq!(4, four);
+    let four = "4".parse::<u32>();
+    assert_eq!(Ok(4), four);
+
+    // 为自定义结构体实现 `FromStr`
+    let p = Point::from_str("{1,2}");
+    assert_eq!(p.unwrap(), Point { x: 1, y: 2 });
+    // Err(ParseIntError { kind: InvalidDigit })
+    let p = Point::from_str("{3,u}");
+    println!("{:?}", p);
+
+    // 使用 `format!` 根据字符串生成字符串
+    let s: String = format!("{}Rust", "Hello");
+    assert_eq!(s, "HelloRust");
+
+    // :5 表示填充字符串宽度
+    assert_eq!(format!("{:5}", "HelloRust"), "HelloRust");
+    // :5 表示填充字符串宽度, .3 表示截取字符长度
+    assert_eq!(format!("{:5.3}", "HelloRust"), "Hel  ");
+    assert_eq!(format!("{:10}", "HelloRust"), "HelloRust ");
+    // 左对齐
+    assert_eq!(format!("{:<12}", "HelloRust"), "HelloRust   ");
+    // 右对齐
+    assert_eq!(format!("{:>12}", "HelloRust"), "   HelloRust");
+    // 中间对齐
+    assert_eq!(format!("{:^12}", "HelloRust"), " HelloRust  ");
+    // 中间对齐, 截取 5, 12宽度
+    assert_eq!(format!("{:^12.5}", "HelloRust"), "   Hello    ");
+    // 用 `=` 填充
+    assert_eq!(format!("{:=^12.5}", "HelloRust"), "===Hello====");
+    assert_eq!(format!("{:*^12.5}", "HelloRust"), "***Hello****");
+    assert_eq!(format!("{:5}", "th\u{e9}"), "thé  ");
+
+    // 针对整数使用 `format!` 格式化为字符串
+    // 显示正负符号
+    assert_eq!(format!("{:+}", 1234), "+1234");
+    // x: 十六进制
+    assert_eq!(format!("{:+x}", 1234), "+4d2");
+    // #: 显示进制前缀
+    assert_eq!(format!("{:+#x}", 1234), "+0x4d2");
+    // b: 二进制
+    assert_eq!(format!("{:b}", 1234), "10011010010");
+    // 二进制 + 前缀
+    assert_eq!(format!("{:#b}", 1234), "0b10011010010");
+    assert_eq!(format!("{:#20b}", 1234), "       0b10011010010");
+    assert_eq!(format!("{:<#20b}", 1234), "0b10011010010       ");
+    assert_eq!(format!("{:^#20b}", 1234), "   0b10011010010    ");
+    assert_eq!(format!("{:>+#15x}", 1234), "         +0x4d2");
+    // 以 0 填充
+    assert_eq!(format!("{:>+#015x}", 1234), "+0x0000000004d2");
+
+    // 针对浮点数使用 `format!` 格式化字符串
+    assert_eq!(format!("{:.4}", 1234.5678), "1234.5678");
+    assert_eq!(format!("{:.2}", 1234.5618), "1234.56");
+    assert_eq!(format!("{:.2}", 1234.5678), "1234.57");
+    assert_eq!(format!("{:<10.4}", 1234.5678), "1234.5678 ");
+    assert_eq!(format!("{:^12.2}", 1234.5618), "  1234.56   ");
+    assert_eq!(format!("{:0^12.2}", 1234.5678), "001234.57000");
+    assert_eq!(format!("{:e}", 1234.5678), "1.2345678e3");
+
+    // 对自定义类型 `format!` 格式化为字符串
+    let city = City { name: "Beijing", lat: 39.90469, lon: -116.40717};
+    assert_eq!(format!("{}", city), "Beijing: 39.905°N 116.407°W");
+    println!("{}", city);
 }
