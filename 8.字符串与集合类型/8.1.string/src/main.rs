@@ -489,7 +489,70 @@ fn main() {
     assert_eq!(format!("{:e}", 1234.5678), "1.2345678e3");
 
     // 对自定义类型 `format!` 格式化为字符串
-    let city = City { name: "Beijing", lat: 39.90469, lon: -116.40717};
+    let city = City {
+        name: "Beijing",
+        lat: 39.90469,
+        lon: -116.40717,
+    };
     assert_eq!(format!("{}", city), "Beijing: 39.905°N 116.407°W");
     println!("{}", city);
+
+    // 求数字方阵的对角线数字之和
+    // 该语法的好处是可以保留原来字符串的特殊符号
+    let s = r"1234
+              5678
+              9876
+              4321";
+    // 记录两条对角线上的数字之和
+    let (mut x, mut y) = (0, 0);
+    // 按行迭代, `enumerate` 获取行号索引
+    for (idx, val) in s.lines().enumerate() {
+        let val = val.trim();
+        // 对角线位置正好等于循环行号索引
+        let left = val.get(idx..idx + 1).unwrap().parse::<u32>().unwrap();
+        let right = val
+            // 获取反斜线位置的字符
+            .get((3 - idx)..(3 - idx + 1))
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        x += left;
+        y += right;
+    }
+
+    assert_eq!(38, x + y);
+
+    // 对角线字符串连接
+    let s = r"mooa
+              oano
+              otio
+              ioon";
+    let v = s.split('\n').collect::<Vec<_>>();
+    let mut s1 = String::new();
+    let mut s2 = String::new();
+    for (idx, val) in v.iter().enumerate() {
+        let x = val.trim();
+        let y = x.chars().collect::<Vec<_>>();
+        println!("{:?}", y);
+        s1.push(y[idx]);
+        s2.push(y[3 - idx]);
+    }
+
+    s1.push(' ');
+    println!("{:?}", s1 + &s2);
+
+    // 解法 2
+    let s = r"mooa
+              oano
+              otio
+              ioon";
+    let (mut s1, mut s2) = (String::with_capacity(4), String::with_capacity(4));
+    for (idx, val) in s.lines().enumerate() {
+        let val = val.trim();
+        s1.push_str(val.get(idx..idx + 1).unwrap());
+        s2.push_str(val.get((3 - idx)..(3 - idx + 1)).unwrap());
+    }
+
+    s1.push(' ');
+    println!("{:?}", s1 + &s2);
 }
