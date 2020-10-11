@@ -653,4 +653,282 @@
    类型
 
 *** 动态可增长数组
+    Rust 中数组有两种类型:  一种是原生类型 array, 它拥有固定的长度, 类型签名为
+    ~[T;N]~; 另一种是动态可增长数组 Vector, 它是可增长的动态数组, 类型签名为
+    ~Vec<T>~, 在运行时才可知道大小. array 和 Vector 的区别在于, array 中的元素可
+    以在栈上存储; 而 Vector 中的元素只能在堆上分配. 本章着重介绍动态可增长数组
+    Vector.
     
+**** 基本操作与内存分配
+     创建 ~Vector~ 和创建 ~String~ 类型字符串的方法很相似, 因为 ~String~ 类型的
+     字符串本身就是对 ~Vec<u8>~ 类型的包装.
+
+     使用 ~Vec::new()~ 时, 创建了一个可变的 ~Vector~ 空数组, 实际上未分配堆内存.
+     如果整个函数都未为其填充元素, 则编译器认定为未初始化内存, 报错.
+
+     从 ~pop()~ 弹出方法可以看出, ~Vector~ 数组天生就可以作为先进后出(FILO)的栈
+     结构使用.
+
+     ~truncate()~ 方法可以截断索引后的元素.
+
+     ~shrink_to_fit()~ 方法相当于重新分配堆内存以适应当前元素内容.
+
+     日常编程中, 使用 ~Vec::with_capacity~ 方法来创建 ~Vector~ 数组可以有效地避
+     免频繁申请堆内存带来的性能损耗.
+
+     有些类型在 Rust 中是不占直接的, 属于零大小类型(ZST).
+     
+     ~Vec::new()~ 初始化了一个 ~Vector~ 空数组. 本质属于一种智能指针, 跟
+     ~String~ 一样也由三部分组成: 
+     - 指向堆中字节序列的指针(~as_ptr~ 方法)
+     - 记录堆中字节序列的字节长度(~len~ 方法)
+     - 堆分配的容量(~capacity~ 方法).
+
+     针对插入 ZST 类型的元素, 容量会等于 ~std::usize::MAX~, 这是 Rust 内部实现的
+     一个技巧, 用一个实际不可能分配的最大值来表示 ZST 的容量. 所以可以放心地使用
+     ~Vector~, 而不必担心内存分配会带来任何不安全的问题.
+
+**** 查找与排序
+     数组也支持字符串中提供的一些查找方法: eg: ~contains~, ~starts_with~ 和
+     ~ends_with~ 方法.
+     
+     以上三种方法都是泛型方法. 它们有一个共同的 trait 限定: ~PartialEq<T>~, 该
+     trait 定义了一些方法用于判断等价关系, 本章后面会有详细介绍. ~contains~ 只能
+     接受引用类型, ~starts_with~ 和 ~ends_with~ 接受的是数组切片类型.
+
+     除以上方法之外, 标准库中还提供了 ~binary_search~ 系列泛型方法来帮助开发者方
+     便地检索数组中的元素.
+
+     ~binary_search~ 方法又叫作二分查找或折半查找方法, 基本要求是待查找的数组必
+     须是有序的, 该算法的平均时间复杂度为 O(logn), 空间复杂度用迭代实现, 所以是
+     O(1).
+     
+     该方法参数为一个引用类型, 且该参数类型 *必须实现 Ord*. Ord trait 抽象了比较
+     操作, 本章后面会有详细介绍. 返回 ~Result~ 类型的索引值.
+
+     ~binary_search_by~ 方法的参数是一个 ~FnMut(&'a T) -> Ordering~ 闭包.
+     ~Ordering~ 是一个枚举类型, 记录的是三种比较结果: 小于(Less), 等于(Equal) 和
+     大于(Greater). 
+
+     ~binary_search_by_key~ 方法接受的是 ~FnMut(&'a T) -> B~ 闭包, 其中 B 对应于
+     参数的类型 (~&B~), 相比于上一种方法, 该方法的闭包参数覆盖范围比较广, 相当于
+     开发者可以指定任意检索条件.
+
+     ~binary_search~ 系列泛型方法前置要求为有序数组, 对于没有排序的数组, 可以使
+     用 ~sort~ 和 ~sort_unstable~ 系列方法.
+
+     ~sort~, ~sort_by~ 和 ~sort_by_key~ 方法内部所用的算法为自适应迭代归并排序
+     (Adaptive/Iterative Merge Sort)算法, 灵感来自 Python 语言中的 TimSort 算法.
+     该算法为稳定排序算法, 即: 序列中等价的元素在排序之后相对位置并不改变, 其时
+     间复杂度为 O(n), 最坏情况为 O(nlogn).
+
+     以上 ~sort~ 系列方法均可被直接替换为 ~sort_unstable~, ~sort_unstable_by~ 和
+     ~sort_unstable_by_key~ 方法. 但是 ~sort_unstable~ 系列方法其内部实现的排序
+     算法为模式消除快速排序(Pattern-Defeating Quicksort)算法, 该算法为不稳定排序
+     算法, 也就是说, 序列中等价的元素在 *排序之后相对位置有可能发生变化*. 其时间
+     复杂度为 O(n), 最坏情况为 O(nlogn). 在不考虑稳定性的情况下, 推荐使用
+     ~sort_unstable~ 系列方法, 其性能要高于 sort 系列方法, 因为它们不会占用额外
+     的内存.
+
+     不管是 ~sort~ 系列方法还是 ~sort_unstable~ 系列方法, 其命名规则和
+     ~binary_search~ 系列方法相类似, 所以他们在语义上也是相同的, xxxx_by 方法表
+     示接收返回 ~Ordering~ 类型的闭包参数; 而 xxxx_by_key 方法接收的闭包参数覆盖
+     范围更广, 适合表示任意检索(排序)条件.
+     
+**** 与排序和比较相关的 trait
+     在上面介绍的诸多数组方法中, 其实都涉及数组内部元素的比较, eg: 判断是否存在、
+     检索和排序都必须要在元素间进行比较. 在 Rust 中把比较操作也抽象为一些 trait,
+     定义在 ~std::cmd~ 模块中. 该模块中定义的 trait 是基于数学集合论中的二元关系
+     偏序、全序和等价的.
+
+     *偏序* 的定义, 对于非空集合中的 a、b、c 来说, 满足下面条件为偏序关系
+     - 自反性: a≤a
+     - 反对称性: 如果 a≤b 且 b≤a, 则 a=b
+     - 传递性: 若 a≤b 且 b≤c, 则 a≤c
+     - 完全性: a<b, b<a 或 a==b 必须满足其一, 表示任何元素都可以相互比较
+
+     *全序* 实际上是一种特殊的偏序:
+     等价的定义, 对于非空集合中的 a、b、c 来说, 满足下面条件为等价关系
+     - 自反性: a==b
+     - 对称性: a==b, 意味着 b==a
+     - 传递性: 若 a==b 且 b==c, 则 a==c
+
+     在 Rust 中一共涉及 4 个 trait 和一个枚举体来表示上述二元关系. 4 个 trait 分
+     别是 ~PartialEq~, ~Eq~, ~PartialOld~ 和 ~Ord~. 这些 trait 的关系可以总结为以
+     下几点:
+    
+     - ~PartialEq~ 代表部分等价关系, 其中定义了 ~eq~ 和 ~ne~ 两个方法, 分别表示 == 和 != 操作
+     - ~Eq~ 代表等价关系, 该 trait 继承自 ~PartialEq~, 但是其中没有定义任何方法.
+       它实际上相当于标记实现了 ~Eq~ 的类型拥有等价关系.
+     - ~PartialOrd~ 对应于偏序, 其中定义了 ~partial_cmp~, ~lt~, ~le~, ~gt~ 和
+       ~ge~ 五个方法
+     - ~Ord~ 对应于全序, 其中定义了 ~cmp~, ~max~ 和 ~min~ 三个方法.
+
+     还有一个枚举体为 ~Ordering~, 用于表示比较结果, 其中定义了小于, 等于和大于三
+     种状态.
+
+     ~PartialEq~ 和 ~Eq~ 的定义
+     #+begin_src rust
+       #[lang = "eq"]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[doc(alias = "==")]
+       #[doc(alias = "!=")]
+       #[rustc_on_unimplemented(
+           message = "can't compare `{Self}` with `{Rhs}`",
+           label = "no implementation for `{Self} == {Rhs}`"
+       )]
+       pub trait PartialEq<Rhs: ?Sized = Self> {
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn eq(&self, other: &Rhs) -> bool;
+
+           #[inline]
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           // `ne` 有默认实现
+           fn ne(&self, other: &Rhs) -> bool {
+               !self.eq(other)
+           }
+       }
+
+       #[doc(alias = "==")]
+       #[doc(alias = "!=")]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 仅标记, 无实际方法
+       pub trait Eq: PartialEq<Self> {
+           #[doc(hidden)]
+           #[inline]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn assert_receiver_is_total_eq(&self) {}
+       }
+     #+end_src
+
+     ~PartialOrd~ 定义
+     #+begin_src rust
+       #[lang = "partial_ord"]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[doc(alias = ">")]
+       #[doc(alias = "<")]
+       #[doc(alias = "<=")]
+       #[doc(alias = ">=")]
+       #[rustc_on_unimplemented(
+           message = "can't compare `{Self}` with `{Rhs}`",
+           label = "no implementation for `{Self} < {Rhs}` and `{Self} > {Rhs}`"
+       )]
+       pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           // 表示具体的比较规则, 注意返回类型
+           // 对于偏序的比较来说, 并不是所有元素都具有可比性, 有些元素的比较结果可能为 `None`
+           // 如果要给某个类型实现 `PatrialOrd`, 只需要实现此方法即可
+           fn partial_cmp(&self, other: &Rhs) -> Option<Ordering>;
+
+           #[inline]
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn lt(&self, other: &Rhs) -> bool {
+               matches!(self.partial_cmp(other), Some(Less))
+           }
+
+           #[inline]
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn le(&self, other: &Rhs) -> bool {
+               matches!(self.partial_cmp(other), Some(Less | Equal))
+           }
+
+           #[inline]
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn gt(&self, other: &Rhs) -> bool {
+               matches!(self.partial_cmp(other), Some(Greater))
+           }
+
+           #[inline]
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           fn ge(&self, other: &Rhs) -> bool {
+               matches!(self.partial_cmp(other), Some(Greater | Equal))
+           }
+       }
+
+       #[derive(Clone, Copy, PartialEq, Debug, Hash)]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub enum Ordering {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           Less = -1,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           Equal = 0,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           Greater = 1,
+       }
+     #+end_src
+    
+     ~Ord~ 定义:
+     #+begin_src rust
+       #[doc(alias = "<")]
+       #[doc(alias = ">")]
+       #[doc(alias = "<=")]
+       #[doc(alias = ">=")]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 继承自: `Eq` 和 `PartialOrd`, 这是因为全序的比较必须满足三个条件:
+       // 反对称性, 传递性和完全性, 其中完全性一定是每个元素都可以相互比较
+       // eg: 浮点数中用于定义特殊情况值而使用的 `NaN`, 其本身就不可比较, 因为 `NaN != NaN`, 它不满足全序的完全性
+       // 所以浮点数只能实现 `PartialEq` 和 `PartialOrd`, 而不能实现 `Ord`
+       // 如果要实现 `Ord`, 只需要实现 `cmp` 方法即可. 因为 `max` 和 `min` 都有没咯嗯实现
+       pub trait Ord: Eq + PartialOrd<Self> {
+           #[must_use]
+           #[stable(feature = "rust1", since = "1.0.0")]
+           // 注意: 返回的不是 `Option<Ordering>` 类型
+           // 因为对于全序关系来说, 每个元素都是可以获得合法的比较结果的
+           fn cmp(&self, other: &Self) -> Ordering;
+
+           #[stable(feature = "ord_max_min", since = "1.21.0")]
+           #[inline]
+           #[must_use]
+           fn max(self, other: Self) -> Self
+           where
+               Self: Sized,
+           {
+               max_by(self, other, Ord::cmp)
+           }
+
+           #[stable(feature = "ord_max_min", since = "1.21.0")]
+               #[inline]
+               #[must_use]
+           fn min(self, other: Self) -> Self
+           where
+               Self: Sized,
+           {
+               min_by(self, other, Ord::cmp)
+           }
+
+           #[must_use]
+               #[unstable(feature = "clamp", issue = "44095")]
+           fn clamp(self, min: Self, max: Self) -> Self
+           where
+               Self: Sized,
+           {
+               assert!(min <= max);
+               if self < min {
+                   min
+               } else if self > max {
+                   max
+               } else {
+                   self
+               }
+           }
+       }
+     #+end_src
+
+     如果要在自定义类型中实现相关 trait, 则必须搞清楚全序和偏序关系, 然后再实现相
+     应地 trait. 可以手工实现, 也可以使用 ~#[derive]~ 来自动派生.
+
+**** 回顾与展望
+     本节虽然重点介绍的是 ~Vector~, 但是里面涉及的方法同样适用于 array. 因为这些
+     方法实际上是为 ~[T]~ 类型实现的.
+
+     当然, array 也有自己专用的方法. eg: 连接两个 array 可以使用 ~join~ 方法. 在
+     标准库中还为数组提供了很多其他方法.
+
+     在 Rust 2018 中, 还加入了针对 array 数组和切片进行 match 匹配的新语法.
