@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 struct Foo;
 
@@ -21,6 +22,23 @@ fn sum(num: &[i32]) {
         [first, second] => println!("{:?} + {:?} = {:?}", first, second, first + second),
         _ => println!("sum is {:?}", num.iter().fold(0, |sum, i| sum + i)),
     }
+}
+
+// `HashMap` 的三种合并方式
+fn merge_extend<'a>(map1: &mut HashMap<&'a str, &'a str>, map2: HashMap<&'a str, &'a str>) {
+    map1.extend(map2);
+}
+
+fn merge_chain<'a>(
+    map1: HashMap<&'a str, &'a str>,
+    map2: HashMap<&'a str, &'a str>,
+) -> HashMap<&'a str, &'a str> {
+    map1.into_iter().chain(map2).collect()
+}
+
+// 第二参数使用不可变借用, 所有权不会转移
+fn merge_by_ref<'a>(map: &mut HashMap<&'a str, &'a str>, map_ref: &HashMap<&'a str, &'a str>) {
+    map.extend(map_ref.into_iter().map(|(k, v)| (k.clone(), v.clone())))
 }
 
 fn main() {
@@ -191,10 +209,86 @@ fn main() {
     let arr = [1, 3, 5];
     pick(arr);
 
-
     // `match` 匹配数组切片示例
     sum(&[1]);
     sum(&[1, 2]);
     sum(&[1, 2, 3]);
     sum(&[1, 2, 3, 5]);
+
+    // 部分 `HashMap` 使用示例
+    let mut book_reviews = HashMap::with_capacity(10);
+    book_reviews.insert("Rust Book", "good");
+    book_reviews.insert("Programming Rust", "nice");
+    book_reviews.insert("The Tao of Rust", "deep");
+
+    // 顺序不一定相同
+    for key in book_reviews.keys() {
+        println!("{}", key);
+    }
+
+    // 顺序不一定相同
+    for val in book_reviews.values() {
+        println!("{}", val);
+    }
+
+    // 查找指定的键
+    if !book_reviews.contains_key("rust book") {
+        println!("find {} times ", book_reviews.len());
+    }
+    book_reviews.remove("Rust Book");
+    let to_find = ["Rust Book", "The Tao of Rust"];
+
+    for book in &to_find {
+        match book_reviews.get(book) {
+            Some(review) => println!("{}: {}", book, review),
+            None => println!("{} is unreviewed.", book),
+        }
+    }
+
+    for (book, review) in &book_reviews {
+        println!("{}: \"{}\"", book, review);
+    }
+
+    // 通过 `Index` 语法可以按指定的键来获得对应的值
+    // *注意*: 只支持 `Index`, 而不支持 `IndexMut`
+    assert_eq!(book_reviews["The Tao of Rust"], "deep");
+
+    
+    // `entry` 方法使用示例
+    let mut map: HashMap<&str, u32> = HashMap::new();
+    // 被传入方法内部之后, 首先会判断哈希表是否有足够的空间, 如果没有, 则自动进行扩容
+    // 接下来调用内部的 `hash` 函数生成此键的 `hash` 值, 然后通过这个 `hash` 值在底层中的哈希表中搜索
+    // 若能找到, 返回相应的桶(`Occupied`), 否则返回空桶(`Vacant`). 最后, 将得到的桶转换为 `Entry<K,V>` 并返回
+    map.entry("current_year").or_insert(2017);
+    assert_eq!(map["current_year"], 2017);
+
+    *map.entry("current_year").or_insert(2017) += 10;
+    assert_eq!(map["current_year"], 2027);
+
+    let last_leap_year = 2016;
+    map.entry("next_leap_year")
+        .or_insert_with(|| last_leap_year + 4);
+    assert_eq!(map["next_leap_year"], 2020);
+    // `key()` 方法获取对应的键
+    assert_eq!(map.entry("current_year").key(), &"current_year");
+
+
+    // `HashMap` 的三种合并方式
+    let mut book_reviews1 = HashMap::new();
+    book_reviews1.insert("Rust Book", "good");
+    book_reviews1.insert("Programming Rust", "nice");
+    book_reviews1.insert("The Tao of Rust", "deep");
+
+    let mut book_reviews2 = HashMap::new();
+    book_reviews2.insert("Rust in Action", "good");
+    book_reviews2.insert("Rust Primer", "nice");
+    book_reviews2.insert("Mastering Rust", "deep");
+
+    // merge_extend(&mut book_reviews1, book_reviews2);
+    // let book_reviews1 = merge_chain(book_reviews1, book_reviews2);
+    merge_by_ref(&mut book_reviews1, &book_reviews2);
+
+    for key in book_reviews1.keys() {
+        println!("{}", key);
+    }
 }
