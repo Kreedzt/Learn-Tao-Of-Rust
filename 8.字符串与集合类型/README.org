@@ -1170,18 +1170,18 @@
      安置被替换的 "富翁" 键值对. 正是因为这种 "劫富济贫" 的思路, 这种算法才被称
      为罗宾汉算法.
 
+     *Tips*: Rust std lib 源码中的 HashMap 依赖于 hashbrown([[https://github.com/rust-lang/hashbrown/blob/master/src/map.rs][HashMap-Map]])
+
      当调用 HashMap 的 ~insert()~ 方法时, 首先会通过 ~make_hash()~ 方法, 将传入
      的键生成 Hash 值, 通过内部的特殊处理(为了防止冲突)生成 SafeHash. 得到 Hash
      值之后, 通过 ~resize()~ 方法判断是否需要扩容, 不管是否需要扩容, 最终都会调
      用到 ~search_hashed()~ 方法.
 
-     *TODO*: 疑问, 源码已更改?
      ~search_hashed()~ 方法需要三个参数: HashMap 的内部 ~table~ 指针, ~SafeHash~
      和用于指定检索条件的 ~FnMut(&K) -> bool~ 闭包. 该方法是按线性探测来寻找桶的,
      如果找到的是 "空桶(Vacant)", 则直接返回. 在内部, 朋友两种类型的桶被认为是空
      桶: 即 ~NoElem~ 和 ~NeqElem~, 分别表示底层数组索引违背占用的桶.
 
-     *TODO*: 疑问, 源码已更改?
      ~VacantEntryState~ 内部定义:
      #+begin_src rust
        #[stable(feature = "rust1", since = "1.0.0")]
