@@ -1,0 +1,508 @@
+* 构建健壮的程序
+  健壮性又叫鲁棒性(Robust). 是一个跨领域的术语, 在建筑、机械、控制、经济和计算机
+  领域均意味着系统的容错和恢复能力.
+
+  纵观软件开发的历史, 为了保证软件的健壮性, 各门语言所用的办法各有特色, 但总归可
+  以分为两大类: *返回错误值* 和 *异常*.
+
+  eg: 在 C 语言中, 并不存在专门的异常处理机制, 卡覅在只能通过返回值、goto、
+  setjump、assert 断言等方式来处理程序中发生的错误， 这些方式的优点是比较灵活，
+  但是缺点更多:
+
+  1. 这种错误并不是强制性检查的, 很容易被开发者疏忽而进一步引起更多的问题, 成为
+     Bug 的温床
+  2. 可读性差, 错误处理代码和正常的功能代码交织在一起, 有可能会让正常逻辑陷入混
+     乱中, 有人称之为 "错误地狱".
+
+  随着 C++、Java 等高级语言的发展, 引入了语言级别的异常处理机制, 才让开发者摆脱
+  了 "错误地狱". 异常处理机制利用 *栈回退(Stack Unwind)* 或 *栈回溯(Stack
+  Backtrack)* 机制, 自动处理异常, 解放了开发者. 异常处理的优点是它是全局且独立的,
+  不需要所有的函数都考虑捕获异常, 并且用专门的语法将异常处理逻辑和正常的功能逻辑
+  清晰地分离开来. 但是异常处理并不完美. 首先, 异常处理的开销比较大, 尤其是在抛出
+  异常时; 其次, 异常处理包含的信息太多, 对于开发者来说, 如何优雅高效地进行异常处
+  理, 又成为另一个难题.
+
+  Rust 作为一门现代安全的系统级编程语言, 如何构建健壮的程序是其必然要解决的问题
+  之一, 而工程性、安全性和性能是其必须要考虑的三重标准.
+
+** 通用概念
+   在编程中遇到的非正常情况, 大概可以分为三类: *失败(Failure)*, *错误(Error)* 和
+   *异常(Exception)*.
+
+   *失败* 是指违反了 "契约" 的行为. 此处的 "契约" 用来表示满足程序正确运行的前提
+   条件. eg: 一个函数在定义时规定必须传入某种类型的参数和返回某种类型的值, 这就
+   创建了一个契约, 在调用该函数时, 需要满足此 "契约" 才是程序正确运行的前提条件.
+
+   *错误* 是指可能出现问题的地方出现了问题. eg: 建立一个 HTTP 连接时超时, 打开一
+   个不存在的文件或查询某些数据返回了空. 这些都是完全在意料之中, 并且有办法解决
+   的问题. 而且这些问题通常都和具体的业务相关联.
+
+   *异常* 是指完全不可预料的问题. eg: 引入了空指针、访问了越界数组、除数为 0 等
+   行为. 这些问题都是非业务相关的.
+
+   很多支持异常处理的语言, eg: C++/Java/Python 或 Ruby 等, 并没有对上述三种情况
+   做出语言级的区分. 这就导致很多开发者在处理异常时把一切非正常情况都当做异常来
+   处理, 甚至把异常处理当做控制流程来使用. 把一切非正常情况都当做异常来处理, 不
+   利于管理. 在开发中很多错误需要在第一时间就暴露出来, 才不至于传播到生产环境进
+   一步造成危害. 有些开发者虽然对异常的三种情况做出了不同的处理, eg: 对错误使用
+   返回值的形式来处理、对真正的异常使用异常机制来处理, 但是却并没有形成统一的标
+   准; 社区里只有最佳实践在口口相传, 但并非强制性执行.
+
+   现代编程语言 Go 在语言层面上区分了异常(Panic)和错误, 但是带来了巨大的争议. 在
+   Go 语言中错误处理是强制性的, 开发人员必须显式地处理错误, 这就导致 Go 语言代码
+   变得相当冗长, 因为每次函数调用都需要 if 语句来判断是否出现问题. Go 语言错误处
+   理的理念很好, 但是具体实现却差强人意. Rust 语言也区分了异常和错误, 相比于 Go
+   语言, Rust 的错误处理机制就显得非常优雅.
+
+** 消除失败
+   Rust 使用以下两种机制来消除失败:
+   - 强大的类型系统
+   - 断言
+
+   Rust 是类型安全的语言, 一切皆类型. Rust 中的函数签名都显式地指定了类型, 通过
+   编译器的类型检查, 就完全可以消除函数调用违反 "契约" 的情况.
+
+   仅仅依赖编译器的类型检查还不足以消除大部分失败, 有些失败发生在运行时. eg:
+   ~Vector~ 数组提供了 ~insert()~ 方法, 插入错误的位置会出错.
+
+   以上情况通过类型检查是无法判断的, 因为无法预先知道开发者会指定声明索引. 这时
+   就需要使用 *断言(Assert)*. RUst 标准库中一共提供了以下六个常用的断言:
+   
+   - ~assert!~: 用于断言布尔表达式在运行时一定返回 true.
+   - ~assert_eq!~: 用于断言两个表达式是否相等(使用 ~PartialEq~).
+   - ~assert_ne!~: 用于断言两个表达式是否不相等(使用 ~PartialEq~).
+   - ~debug_assert!~: 等价于 ~assert!~, 只能用于调试模式.
+   - ~debug_assert_eq!~: 等价于 ~assert_eq!~, 只能用于调试模式
+   - ~debug_assert_ne!~, 等价于 ~assert_ne!~, 只能用于调试模式
+
+   以上六个断言都是宏. ~assert~ 系列宏在调试(Debug)和发布(Release)模式下均可用,
+   并且不能被禁用. ~debug_assert~ 系列宏只在调试模式下起作用. 在使用断言时, 要注
+   意具体的场合是否一定需要 ~assert~ 系列宏, 因为断言的性能开销不可忽略, 尽量使
+   用 ~debug_assert~ 系列宏.
+
+   在 ~insert()~ 方法中使用 ~assert!~ 断言
+   #+begin_src rust
+     #[stable(feature = "rust1", since = "1.0.0")]
+     pub fn insert(&mut self, index: usize, element: T) {
+         let len = self.len();
+         if index > len {
+             // 超过直接引发线程恐慌
+             assert_failed(index, len);
+         }
+         // ...
+     }
+   #+end_src
+
+   引发线程恐慌不算消除失败, 是一种 *快速失败(Fast Fail)* 的策略, 这样做可以让开
+   发中的错误尽早地暴露出来, 使得 Bug 无处藏身. 所以 ~assert~ 系列宏也支持自定义
+   错误消息.
+
+   综上所述, 通过断言可以对函数进行契约式的约束. 所谓 "契约" 就是指可以确保程序
+   正常运行的条件, 一旦 "契约" 被毁, 就意味着程序出了 Bug. 程序运行的条件大概可
+   以分为以下三类:
+
+   - *前置条件*: 代码只需之前必须具备的特性
+   - *后置条件*: 代码只需之后必须具体的特性
+   - *前后不变*: 代码只需前后不能变化的特性
+
+   在日常开发中, 如果必要的话, 则可以依据这三类情况来设置断言.
+
+   除断言之外, 还可以直接通过 ~panic!~ 宏来制造线程恐慌, 其实在 ~assert~ 系列宏
+   内部也使用了 ~panic!~ 宏. 那么什么时候使用呢? 其实还是遵循快速失败的原则, 在
+   处理某些在运行时决不允许或绝不可能的情况时, 可以使用 ~panic!~ 宏.
+   
+** 分层处理错误
+   Rust 提供了分层式错误处理方案:
+   - ~Option<T>~: 用于处理 *有* 和 *无* 的情况. eg: 在 ~HashMap~ 中指定一个键,
+     但不存在对于的值, 此时应返回 ~None~, 开发者应该对 ~None~ 进行相应的处理, 而
+     不是直接引发线程恐慌
+   - 线程恐慌(Panic): 用于处理无法合理解决的问题. eg: 为不存在的索引插值, 就必须
+     引发线程恐慌. 
+     *注意*: 如果主线程引发了线程恐慌, 则会造成应用程序以非 0 退出码退出进程, 也
+     就是发生崩溃.
+   - *程序终止(Abort)*: 用于处理会发生灾难后果的情况, 使用 ~abort()~ 函数可以将
+     进程正常中止.
+
+   Rust 的错误处理方案来源于函数式语言(eg: Haskell)  , 不仅仅区分了错误和异常,
+   而且将错误更进一步区分为 ~Option<T>~ 和 ~Result<T, E>~. 使用和类型 ~Enum~, 使
+   得基于返回值的错误处理粒度更细、更加优雅. 在 Rust 中, 线程发生恐慌就是异常.
+
+*** 可选值 Option<T>
+    ~Option<T>~ 类型属于枚举体, 包括两个可选的变体: ~Some(T)~ 和 ~None~,
+    ~Option<T>~ 可以被使用再多种场景中. eg: 可选的结构体、可选的函数参数、可选的
+    结构体字段、可空的指针、占位(如在 ~HashMap~ 实现中将诶绝 ~remove()~ 问题)等.
+
+    ~Option<T>~ 类型在日常开发中非常常见, 它基本上消除了空指针问题.
+
+**** unwrap 系列方法
+     处理目标: 获取匹配的值
+     处理结果:
+     - ~unwrap()~ 方法匹配 ~None~ 时会引发线程恐慌.
+     - ~unwrap_or()~ 方法实际上是对 ~match~ 匹配包装的语法糖, 该方法可以指定处理
+       ~None~ 时的返回值
+     - ~unwrap_or_else()~ 同上类似, 只不过它的参数是一个 ~FnOnce() -> T~ 闭包
+     - ~expect()~: 遇到 ~None~ 时引发线程恐慌, 并可通过传入参数来展示指定的异常
+       消息
+
+     在日常开发中可以  根据具体的需求选择适合的 ~unwrap~ 系列方法. ~unwrap~ 方法
+     适合在开发过程中 *快速获取失败*, 提早暴露 Bug, 如果要自定义异常消息, 则可以
+     使用 ~expect()~. 对于明显需要处理 ~None~ 的情况, 则可以直接使用 ~match~, 但
+     是使用 ~unwrap_or()~ 或 ~unwrap_or_else()~ 可以让代码更简洁.
+     
+**** 高效处理 Option<T>
+     大多数情况下, 需要使用 ~Option<T>~ 中包含的值进行计算, 有时候只需要单步计算,
+     有时候则需要连续多步计算. 如果把 ~Option<T>~ 中的值通过 ~unwrap()~ 取出来再
+     去参与计算, 则会多出很多校验代码, eg: 判断是否为 ~None~ 值. 如果使用
+     ~match~ 方法, 则代码显得比较冗余.
+
+     在标准库 ~std::option~ 模块中, 还提供了 ~map~ 系列方法来改善这种情况.
+
+     ~std::option::Option::map~ 方法的具体实现:
+     #+begin_src rust
+       #[inline]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 泛型方法, 内部是 `match` 匹配, 参数为 `FnOnce(T) -> U` 闭包.
+       pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> Option<U> {
+           match self {
+               Some(x) => Some(f(x)),
+               None => None,
+           }
+       }
+     #+end_src
+
+     通过 ~map()~ 方法就可以在无需取出 ~Option<T>~ 值的情况下, 方便地在
+     ~Option<T>~ 内部进行计算. 像 ~map~ 这样的方法, 叫做 *组合子(Combinator)*.
+
+     除 ~map()~ 方法之外, 还有 ~map_or()~ 和 ~map_or_else()~ 方法, 它们跟
+     ~map()~ 方法类似, 都是对 ~match~ 的包装, 不同的地方在于, 它们可以为 ~None~
+     指定默认值(回想 ~unwrap_or()~ 和 ~unwrap_or_else()~).
+
+     在有些情况下, 只靠 ~map()~ 方法还不足以满足需要. eg: 对 ~Option<T>~ 中的
+     ~T~ 进行处理的函数返回的也是一个 ~Option<T>~, 如果此时用 ~map~, 就会多包装
+     一层 ~Some~. 假如现在要对一个浮点数进行一系列计算, 提供的计算函数包括:
+     *inverse(符号取反)*, *double(加倍)*, *log(求以 2 为底的对数)*, *square(平
+     方)*, *sqrt(开方)*. 在这些计算函数中, 求对数和开方的计算有可能出现异常值,
+     eg: 对负数求对数和开方都会出现 *NaN*, 所以这两个计算函数的返回值一定是
+     ~Option<T>~ 类型.
+     
+     ~and_then()~ 可以接收返回 ~Option~ 类型的闭包, 并且不会额外包装 ~Option~ 类
+     型.
+
+     ~and_then~ 组合子方法的实现:
+     #+begin_src rust
+       #[inline]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub fn and_then<U, F: FnOnce(T) -> Option<U>>(self, f: F) -> Option<U> {
+           match self {
+               // 与 `map` 的区别在此, 没有包装为 `Option` 类型
+               Some(x) => f(x),
+               None => None,
+           }
+       }
+     #+end_src
+     
+     除此之外, 标准库还提供了其他组合子方法, 用于高效、方便地处理 ~Option<T>~ 的
+     各种情况
+     
+*** 错误处理 Result<T, E>
+    ~Option<T>~ 解决的是 *有* 和 *无* 的问题, 它在一定程度上消灭了空指针, 保证了
+    内存安全. 但使用 ~Option<T>~ 实际上并不算错误处理. Rust 专门提供了
+    ~Result<T, E>~ 来进行错误处理, 和 ~Option<T>~ 相似, 均为枚举类型, 但
+    ~Result<T, E>~ 更关注的是编程中可以合理解决的错误. 从语义上看, ~Option<T>~
+    可以被看作是忽略了错误类型的 ~Result<T, ()>~, 所以有时候它们也是可以相互转换
+    的.
+
+    ~Result<T, E>~ 定义
+    #+begin_src rust
+      #[derive(Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
+      #[must_use = "this `Result` may be an `Err` variant, which should be handled"]
+      #[rustc_diagnostic_item = "result_type"]
+      #[stable(feature = "rust1", since = "1.0.0")]
+
+      pub enum Result<T, E> {
+          #[lang = "Ok"]
+          #[stable(feature = "rust1", since = "1.0.0")]
+          Ok(#[stable(feature = "rust1", since = "1.0.0")] T),
+
+          #[lang = "Err"]
+          #[stable(feature = "rust1", since = "1.0.0")]
+          Err(#[stable(feature = "rust1", since = "1.0.0")] E),
+      }
+    #+end_src
+
+    从上看出, ~Result<T, E>~ 枚举体包含两个变体: ~Ok(T)~ 和 ~Err(E)~, 其中
+    ~Ok(T)~ 表示正常情况下的返回值, ~Err(E)~ 表示发生错误时返回的错误值. 其中
+    ~#[must_use]~ 属性表示: 如果对程序中的 ~Result<T, E>~ 结果没有进行处理, 则会
+    发出警告来提示开发者必须处理相应的错误, 有助于提升程序的健壮性.
+
+**** 高效处理 Result<T, E>
+     在标准库 ~std::result~ 模块中, 也为 ~Result<T, E>~ 实现了很多方法, eg:
+     ~unwrap~ 系列方法.
+
+     ~std::result~ 模块中也提供了很多组合子方法, eg: ~map~ 和 ~and_then~ 等, 其
+     用法和 ~Option<T>~ 相似, 使用组合子方法可以更加优雅地处理错误.
+
+**** 处理不同类型的错误
+     在第 8 章中了解, 使用 ~parse()~ 方法将字符串解析为十进制数字, 内部实际上是
+     ~FromStr::from_str~ 方法的包装, 并且其返回值为 ~Result<F, <F as
+     FromStr>::Err>~. 对于 ~u32~ 类型实现的 ~FromStr::from_str~ 来说, 整个过程解
+     析如下:
+
+     - 判断字符串是否为空. 如果为空, 则返回错误 ~Err(ParseIntError{kind: Empty})~
+     - 将字符串转换为字节数组, 根据第一个字节判断是正数还是负数, 并将符号位从字
+       节数组中分离出去, 只剩下数字.
+     - 循环分离符号位之后的字节数组, 逐个用 ~as~ 转换为 ~char~ 类型, 调用
+       ~to_digit()~ 方法将字符转换为数字, 并在循环中累加. 循环完毕后, 如果全部字
+       符解析成功, 则返回正常的结果; 否则, 返回错误 ~Err(ParseIntError{kind:
+       InvalidDigit})~. 在循环过程中还需要计算是否超过了对应数字类型的最大范围,
+       如果超过了就会返回错误 ~Err(ParseIntError{kind: Overflow})~.
+
+     看的出来, 一个看似简单的 ~parse()~ 方法, 其解析过程如此曲折, 其间要抛出多种
+     错误类型. 但是对于 ~Result<T, E>~ 来说, 最终只能返回一个 ~Err~ 类型, 如果在
+     方法中返回了不同的错误类型, 编译就会报错.
+
+     ~ParseIntError~ 源码:
+     #+begin_src rust
+       #[derive(Debug, Clone, PartialEq, Eq)]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub struct ParseIntError {
+           pub(super) kind: IntErrorKind,
+       }
+
+       #[unstable(
+           feature = "int_error_matching",
+           reason = "it can be useful to match errors when making error messages \
+                     for integer parsing",
+           issue = "22639"
+       )]
+       #[derive(Debug, Clone, PartialEq, Eq)]
+       #[non_exhaustive]
+       pub enum IntErrorKind {
+           Empty,
+           InvalidDigit,
+           Overflow,
+           Underflow,
+           // 与书中不一致
+           Zero,
+       }
+     #+end_src
+     
+     ~parse()~ 返回的其实是一个统一的类型 ~ParseIntError~. 其内部成员是一个枚举
+     类型 ~IntErrorKind~, 其中根据解析过程中可能发生的情况定义了相应的变体作为具
+     体的错误类型. 这就解决了返回多种错误类型的问题.
+
+     在日常开发中, 最容易出错的地方是 I/O 操作. 所以在 Rust 标准库 ~std::io~ 模
+     块中定义了 *统一的错误类型 ~Error~.*, 以便开发者能够方便地处理多种类型的
+     I/O 错误.
+
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub struct Error {
+           repr: Repr,
+       }
+
+       enum Repr {
+           // 操作系统返回的错误码
+           Os(i32),
+           // 内建错误
+           Simple(ErrorKind),
+           // 开发者自定义错误
+           Custom(Box<Custom>),
+       }
+
+       #[derive(Debug)]
+       struct Custom {
+           kind: ErrorKind,
+           error: Box<dyn error::Error + Send + Sync>,
+       }
+
+       #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[allow(deprecated)]
+       #[non_exhaustive]
+       pub enum ErrorKind {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           NotFound,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           PermissionDenied,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           ConnectionRefused,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           ConnectionReset,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           ConnectionAborted,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           NotConnected,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           AddrInUse,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           AddrNotAvailable,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           BrokenPipe,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           AlreadyExists,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           WouldBlock,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           InvalidInput,
+           #[stable(feature = "io_invalid_data", since = "1.2.0")]
+           InvalidData,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           TimedOut,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           WriteZero,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           Interrupted,
+           #[stable(feature = "rust1", since = "1.0.0")]
+           Other,
+           #[stable(feature = "read_exact", since = "1.6.0")]
+           UnexpectedEof,
+       }
+     #+end_src
+
+     直接抛错误对程序的健壮性有很大问题. 如果此时想顺序地对正常解析出来的数字进
+     行求和而不受新加入的干扰, 该如何处理错误?
+
+     办法之一是像 I/O 或 ~parse()~ 方法内部实现的那样, 自定义统一的错误处理类型.
+     办法之二是通过 Rust 提供的 ~Error trait~. 标准库中提供的所有错误都实现了此
+     trait, 这意味着只要使用 trait 对象就可以统一错误类型.
+     
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub trait Error: Debug + Display {
+           #[stable(feature = "rust1", since = "1.0.0")]
+           #[rustc_deprecated(since = "1.42.0", reason = "use the Display impl or to_string()")]
+           // 错误简短描述
+           fn description(&self) -> &str {
+               "description() is deprecated; use Display"
+           }
+
+           #[stable(feature = "rust1", since = "1.0.0")]
+           #[rustc_deprecated(
+               since = "1.33.0",
+               reason = "replaced by Error::source, which can support downcasting"
+           )]
+           // 错误发生原因
+           #[allow(missing_docs)]
+           fn cause(&self) -> Option<&dyn Error> {
+               self.source()
+           }
+       }
+
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 将一个实现了 `Error` 的错误类型方便地转换为 `Box<Error>`
+       impl<'a, E: Error + 'a> From<E> for Box<dyn Error + 'a> {
+           fn from(err: E) -> Box<dyn Error + 'a> {
+               Box::new(err)
+           }
+       }
+     #+end_src
+
+     在 Rust 2015 中, ~main()~ 函数是没有返回值的(Rust 2018 中, ~main()~ 函数可
+     以有返回值).
+
+     使用 trait 对象虽然方便, 但它属于动态分发, 在性能上弱于自定义统一的错误类型.
+     重构代码为自定义错误类型.
+
+     Rust 提供了一个 ~try!~ 宏, 通过它可以允许开发者简化处理 Result 错误的过程
+
+     ~try!~ 宏的源码
+     #+begin_src rust
+       #[macro_export]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 废弃于 1.39
+       #[rustc_deprecated(since = "1.39.0", reason = "use the `?` operator instead")]
+       #[doc(alias = "?")]
+       macro_rules! r#try {
+           ($expr:expr) => {
+               match $expr {
+                   $crate::result::Result::Ok(val) => val,
+                   $crate::result::Result::Err(err) => {
+                       return $crate::result::Result::Err($crate::convert::From::from(err));
+                   }
+               }
+           };
+           ($expr:expr,) => {
+               $crate::r#try!($expr)
+           };
+       }
+     #+end_src
+     该宏会自动生成 ~match~ 匹配 ~Result~ 的处理, 并且会将错误通过 ~return~ 返回.
+
+     使用问号操作符替代 ~try!~ 宏. 放到要处理错误的代码后面, 更加凸现了程序的功
+     能代码, 从可读性上降低了错误处理的存在感, 更加优雅.
+
+**** 将 Option<T> 转换为 Result<T, E>
+     上面的一系列重构主要是针对 ~run()~ 函数来改进错误处理的. 但是在 ~main()~ 函
+     数中, 还存在可以改进的空间.
+
+     *注意*: 如果想让 ~Option<String>~ 支持 ~?~ 语法糖, 那么必须得实现 ~From~ 允
+     许 ~NoneError~ 转换为 ~CliError~. 目前该特性还属于 *实验特性*, 所以需要在整
+     个代码文件的顶部添加 ~#![feature(try_trait)]~ 特性.
+
+***** main 函数返回 Result
+      在 Rust 2018 版本中, 允许 ~main~ 函数返回 ~Result<T, E>~ 来传播错误.
+
+      ~Result~ 返回单元类型是因为当前有一个限制, 必须实现
+      ~std::process::Termination~ 这个 trait 才可以作为 ~main~ 函数的 ~Result<T,
+      E>~ 返回类型. 当前只有单元类型、数字、bool、字符串、never 类型等实现了该
+      trait.
+
+      目前该特性还在逐步完善中, 在不久的将来, 在 ~main~ 函数的 ~Result<T, E>~ 中
+      应该可以允许使用更多的类型.
+
+***** 问号语法糖相关 trait
+      和问号语法糖相关的 trait 是 ~std::ops::Try~.
+
+      ~std::ops::Try~ 源码:
+      #+begin_src rust
+        #[doc(alias = "?")]
+        #[lang = "try"]
+        pub trait Try {
+
+            #[unstable(feature = "try_trait", issue = "42327")]
+            type Ok;
+
+            #[unstable(feature = "try_trait", issue = "42327")]
+            type Error;
+
+            #[lang = "into_result"]
+            #[unstable(feature = "try_trait", issue = "42327")]
+            fn into_result(self) -> Result<Self::Ok, Self::Error>;
+
+            #[lang = "from_error"]
+            #[unstable(feature = "try_trait", issue = "42327")]
+            fn from_error(v: Self::Error) -> Self;
+
+            #[lang = "from_ok"]
+            #[unstable(feature = "try_trait", issue = "42327")]
+            fn from_ok(v: Self::Ok) -> Self;
+        }
+      #+end_src
+
+
+      为 ~Option<T>~ 实现 ~std::ops::Try~ 的源码:
+      #+begin_src rust
+        #[unstable(feature = "try_trait", issue = "42327")]
+        impl<T> ops::Try for Option<T> {
+            type Ok = T;
+            type Error = NoneError;
+
+            #[inline]
+            fn into_result(self) -> Result<T, NoneError> {
+                self.ok_or(NoneError)
+            }
+
+            #[inline]
+            fn from_ok(v: T) -> Self {
+                Some(v)
+            }
+
+            #[inline]
+            fn from_error(_: NoneError) -> Self {
+                None
+            }
+        }
+      #+end_src
+
+      
