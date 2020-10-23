@@ -534,3 +534,98 @@
     #+end_src
 
     
+** 自定义 Cargo
+   Cargo 允许修改本地配置来自定义一些信息, eg: 命令别名、源地址等. 默认的全局配
+   置位于 "$HOME/.cargo/config" 文件(windows 为 "%USERPROFILE%\.cargo\config")
+   中
+   
+   #+begin_src toml
+     # 代表 crates.io 的相关配置
+     [registry]
+     # 在 `crates.io` 上注册帐号以后由网站颁发的, 用于开发者在发布包(crate)时通过平台样子
+     token = "your_crates_io_token"
+
+     # 表示 Cargo 的源
+     [source.crates-io]
+     registry = "https://github.com/rust-lang/crates.io-index"
+
+     # 定义命令别名
+     [alias]
+     b = "build"
+     t = "test"
+     r = "run"
+     rr = "run --release"
+     ben = "bench"
+     space_example = ["run", "--release", "--", "\"command list\""]
+
+     [http]
+     proxy = "http://127.0.0.1:7890"
+
+     [https]
+     proxy = "http://127.0.0.1:7890"
+   #+end_src
+
+   
+*** Cargo 配置文件的层级关系说明
+    与 git 一样支持层级概念:
+    可以全局配置, 也可以针对具体的项目(包)进行配置, 如下所示:
+    - 所有用户的全局配置: ~/.cargo/config~
+    - 当前用户的全局配置: ~$HOME/.cargo/config~
+    - 根包 regex 的配置: ~/regex/.cargo/config~
+
+    *Cargo 配置会从上到下层层覆盖, 上下层的配置并不会相互影响*.
+
+*** 自定义 Cargo 子命令
+    Cargo 允许自定义命令来满足一些特殊的要求. 
+    只要在 *$PATH* (环境变量) 中能查到以 "cargo-" 为前缀的二进制文件, eg:
+    cargo-someghing, 就可通过 cargo something 来调用此命令.
+
+    eg: 在日常开发中专门用于格式化 Rust 代码的第三方 Cargo 扩展 rustfmt, 就是这
+    样来扩展 Cargo 命令的.
+
+    可以通过下列命令来安装 rustfmt:
+    - 稳定版(Stable) Rust: ~rustup component add rustfmt~
+    - 每夜版(Nightly) Rust: ~rustup component add rustfmt --toolchain nightly~
+    
+    通过 ~cargo --list~ 命令来查看当前可用的全部命令, 就可以发现多了一个 ~fmt  ~
+    命令, 然后就可以直接调用 ~cargo fmt~ 命令来格式化 Rust 文件. 同时还会产生
+    一个 *.bk 文件作为备份. 如果有些地方不想被 rustfmt 处理, 只需要在该处上方添
+    加 ~#[rustfmt_skip]~ 属性即可.
+
+    [[https://github.com/rust-lang/rustfmt][rustfmt 源码]] 中 ~Cargo.toml~ 文件的部分配置
+    #+begin_src toml
+      [[bin]]
+      name = "rustfmt"
+      path = "src/rustfmt/main.rs"
+      required-features = ["rustfmt"]
+
+      [[bin]]
+      name = "cargo-fmt"
+      path = "src/cargo-fmt/main.rs"
+      required-features = ["cargo-fmt"]
+
+      [[bin]]
+      name = "rustfmt-format-diff"
+      path = "src/format-diff/main.rs"
+      required-features = ["rustfmt-format-diff"]
+
+      [[bin]]
+      name = "git-rustfmt"
+      path = "src/git-rustfmt/main.rs"
+      required-features = ["git-rustfmt"]
+    #+end_src
+
+    一共配置了 4 个可执行文件的名字, 其中包括了 cargo-fmt, 所以使用 ~cargo fmt~
+    可以调用.
+    
+    *警告*: 此处有改动
+    path 分别对应了执行的文件.
+    
+    [[https://rust-lang.github.io/rustfmt/][rustfmt 配置文档]]
+
+    Cargo 还提供了 2 个在开发中相当有用的工具: cargo-fix 和 cargo-clippy. 其中
+    cargo-fix 提供了 ~cargo fix~ 命令, 可以为开发者自动修复编译过程中出现的
+    Warning. ~cargo-clippy~ 是 Rust 静态代码分析工具, 提供了 ~cargo clippy~ 命令,
+    帮助开发者检测代码中潜在的错误和不规范代码, 并且从 Rust 1.29 版本开始可用于
+    Rust 稳定版中.
+    
