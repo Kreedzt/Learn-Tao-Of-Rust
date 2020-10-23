@@ -226,3 +226,311 @@
      #+end_src
 
      
+** Cargo.toml 文件格式
+   TOML 文件是通用的格式, 可以用它表示任何配置格式. Cargo 也有一套专用的 TOML 配
+   置格式.
+
+   现以第三方包 regex 作为示例说明.
+
+*** [package] 表配置
+    #+begin_src toml
+      [package]
+      # 名称
+      name = "regex"
+      # 版本
+      version = "1.4.1"
+      # 作者
+      authors = ["The Rust Project Developers"]
+      exclude = ["/scripts/*", "/.github/*"]
+      autotests = false
+      # 描述
+      description = "An implementation of regular expressions for Rust. This implementation uses\nfinite automata and guarantees linear time matching on all inputs.\n"
+      homepage = "https://github.com/rust-lang/regex"
+      # 文档地址
+      documentation = "https://docs.rs/regex"
+      readme = "README.md"
+      categories = ["text-processing"]
+      license = "MIT OR Apache-2.0"
+      # 源码仓库地址
+      repository = "https://github.com/rust-lang/regex"
+    #+end_src
+
+    在 TOML 语言中, [package] 这种语法叫做 *表(Table)*. 在 [package] 表里描述的
+    都是和 regex 包有感的元数据, 包名(name)、作者(authors)、源码仓库地址
+    (repository)、文档地址(documentation)、包功能的简要介绍(description)、包的分
+    类(categories)等.
+
+    该表是 *必不可少* 的.
+
+*** [badges] 表配置
+    #+begin_src toml
+      [badges]
+      travis-ci = { repository = "jonas-schievink/adler" }
+      maintenance = { status = "actively-developed" }
+    #+end_src
+
+    这两项表配置表示可以在 [[https://crates.io][crates.io]] 网站上显示这两项的展示徽章. 都是云端的持续
+    集成服务平台, 前者支持 Linux 和 MacOS 系统, 后者支持 Windows 系统. 该表示是
+    一个可选表
+
+*** [workspace] 表配置
+    [workspace] 表代码工作空间(Workspace). 指在同一个根包(crate)下博啊发了你多个
+    子包)crate.
+    #+begin_src toml
+      [workspace]
+      members = ["bench", "regex-capi", "regex-debug", "regex-syntax"]
+    #+end_src
+
+    工作空间中的子包都有自己的 Cargo.toml 配置, 各自独立, 互不影响. 在根包的
+    Cargo.toml 中指定的依赖项, 也不会影响到子包. 不管是编译根包还是子包, 最终的
+    编译结果永远都会输出到根包的 target 目录下, 并且整个工作空间只允许有一个
+    Cargo.lock 文件.
+
+    
+*** [dependencies] 表配置
+    #+begin_src toml
+      # For very fast prefix literal matching.
+      [dependencies.aho-corasick]
+      version = "0.7.6"
+      optional = true
+
+      # For skipping along search text quickly when a leading byte is known.
+      [dependencies.memchr]
+      version = "2.2.1"
+      optional = true
+
+      # For managing regex caches quickly across multiple threads.
+      [dependencies.thread_local]
+      version = "1"
+      optional = true
+
+      # For parsing regular expressions.
+      [dependencies.regex-syntax]
+      path = "regex-syntax"
+      version = "0.6.20"
+      default-features = false
+
+      [dev-dependencies]
+      # For examples.
+      lazy_static = "1"
+      # For property based tests.
+      quickcheck = { version = "0.8", default-features = false }
+      # For generating random test data.
+      rand = "0.6.5"
+    #+end_src
+    该表专门用于设置第三方包的依赖, 这些依赖会执行 cargo build 命令编译时使用.
+    [dev-dependencies] 表的作用与之相似, 只不过它只用来设置测试(tests), 示例
+    (examples) 和基准测试(benchmarks)时使用的依赖, 在执行 cargo test 或 cargo
+    bench 命令时使用.
+
+*** [features] 表配置
+    #+begin_src toml
+      [features]
+      default = ["std", "perf", "unicode", "regex-syntax/default"]
+
+      std = []
+      # The 'use_std' feature is DEPRECATED. It will be removed in regex 2. Until
+      # then, it is an alias for the 'std' feature.
+      use_std = ["std"]
+
+
+      # PERFORMANCE FEATURES
+
+      # Enables all performance features.
+      perf = ["perf-cache", "perf-dfa", "perf-inline", "perf-literal"]
+      # Enables fast caching. (If disabled, caching is still used, but is slower.)
+      perf-cache = ["thread_local"]
+      # Enables use of a lazy DFA when possible.
+      perf-dfa = []
+      # Enables aggressive use of inlining.
+      perf-inline = []
+      # Enables literal optimizations.
+      perf-literal = ["aho-corasick", "memchr"]
+
+
+      # UNICODE DATA FEATURES
+
+      # Enables all Unicode features. This expands if new Unicode features are added.
+      unicode = [
+      "unicode-age",
+      "unicode-bool",
+      "unicode-case",
+      "unicode-gencat",
+      "unicode-perl",
+      "unicode-script",
+      "unicode-segment",
+      "regex-syntax/unicode",
+      ]
+      # Enables use of the `Age` property, e.g., `\p{Age:3.0}`.
+      unicode-age = ["regex-syntax/unicode-age"]
+      # Enables use of a smattering of boolean properties, e.g., `\p{Emoji}`.
+      unicode-bool = ["regex-syntax/unicode-bool"]
+      # Enables Unicode-aware case insensitive matching, e.g., `(?i)β`.
+      unicode-case = ["regex-syntax/unicode-case"]
+      # Enables Unicode general categories, e.g., `\p{Letter}` or `\pL`.
+      unicode-gencat = ["regex-syntax/unicode-gencat"]
+      # Enables Unicode-aware Perl classes corresponding to `\w`, `\s` and `\d`.
+      unicode-perl = ["regex-syntax/unicode-perl"]
+      # Enables Unicode scripts and script extensions, e.g., `\p{Greek}`.
+      unicode-script = ["regex-syntax/unicode-script"]
+      # Enables Unicode segmentation properties, e.g., `\p{gcb=Extend}`.
+      unicode-segment = ["regex-syntax/unicode-segment"]
+
+
+      # UNSTABLE FEATURES (requires Rust nightly)
+
+      # A blanket feature that governs whether unstable features are enabled or not.
+      # Unstable features are disabled by default, and typically rely on unstable
+      # features in rustc itself.
+      unstable = ["pattern"]
+
+      # Enable to use the unstable pattern traits defined in std. This is enabled
+      # by default if the unstable feature is enabled.
+      pattern = []
+    #+end_src
+
+    该表的配置项与 *条件编译有关*. 在 Rust 中, 有一种特殊的属性 *#[cfg]*, 叫做 
+    *条件编译属性*, 该属性允许编译器按指定的标记选择性地编译代码. 在此例中,
+    pattern 表示允许使用 std 标准库中定义的 Pattern trait, 但是该 trait 目前还处
+    于未定状态, 所以使用了 unstable 配置.
+
+    #+begin_src rust
+      #[cfg(not(feature = "perf-cache"))]
+      mod imp;
+      #[cfg(feature = "perf-cache")]
+      mod imp;
+    #+end_src
+    
+    以上代码意味着: 当 cargo build --features "perf-cache" 命令时, 在 Cargo 内部
+    调用 Rust 编译器 rustc 会传 --cfg feature="perf-cache" 标记, 此时会选择后者
+    编译. not 作用正好相反.
+
+*** [lib] 表配置
+    #+begin_src toml
+      [lib]
+      # There are no benchmarks in the library code itself
+      bench = false
+      # Doc tests fail when some features aren't present. The easiest way to work
+      # around this is to disable automatic doc testing, but explicitly test them
+      # with `cargo test --doc`.
+      doctest = false
+    #+end_src
+
+    [lib] 表用来表示 *最终编译目标库的信息*.
+
+    该表完整的配置项主要包含以下几类:
+    - name: 
+      eg: ~name="foo"~, 表示将来编译的库名字为 "libfoo.a" 或 "libfoo.so" 等.
+    - crate-type:
+      eg: ~crate-type=["dylib", "staticlib"]~, 表示可以同时编译生成动态库和静态
+      库.
+    - path:
+      eg: ~path="src/lib.rs"#~, 表示库文件入口, 如果不指定, 则默认是 ~src/lib.rs~.
+    - test:
+      eg: ~test=true~, 表示可以使用单元测试
+    - bench:
+      eg: ~bench=true~, 表示可以使用性能基准测试
+
+*** [test] 表配置
+    #+begin_src toml
+      [[test]]
+      path = "tests/test_default.rs"
+      name = "default"
+
+      # The same as the default tests, but run on bytes::Regex.
+      [[test]]
+      path = "tests/test_default_bytes.rs"
+      name = "default-bytes"
+
+      # Run the test suite on the NFA algorithm over Unicode codepoints.
+      [[test]]
+      path = "tests/test_nfa.rs"
+      name = "nfa"
+
+      # Run the test suite on the NFA algorithm over bytes that match UTF-8 only.
+      [[test]]
+      path = "tests/test_nfa_utf8bytes.rs"
+      name = "nfa-utf8bytes"
+
+      # Run the test suite on the NFA algorithm over arbitrary bytes.
+      [[test]]
+      path = "tests/test_nfa_bytes.rs"
+      name = "nfa-bytes"
+
+      # Run the test suite on the backtracking engine over Unicode codepoints.
+      [[test]]
+      path = "tests/test_backtrack.rs"
+      name = "backtrack"
+
+      # Run the test suite on the backtracking engine over bytes that match UTF-8
+      # only.
+      [[test]]
+      path = "tests/test_backtrack_utf8bytes.rs"
+      name = "backtrack-utf8bytes"
+
+      # Run the test suite on the backtracking engine over arbitrary bytes.
+      [[test]]
+      path = "tests/test_backtrack_bytes.rs"
+      name = "backtrack-bytes"
+
+      # Run all backends against each regex found on crates.io and make sure
+      # that they all do the same thing.
+      [[test]]
+      path = "tests/test_crates_regex.rs"
+      name = "crates-regex"
+    #+end_src
+
+    多组 [[test]\] 表示一个数组.
+
+    [[test]\] 表示支持的配置项和 [lib] 表基本相同
+
+*** [profile] 表配置
+    #+begin_src toml
+      [profile.release]
+      debug = true
+
+      [profile.bench]
+      debug = true
+
+      [profile.test]
+      debug = true
+    #+end_src
+
+    Cargo 支持自定义 rustc 配置, 使用 [profile] 表进行配置即可, 但只对 *根包* 中
+    的 profile 配置有效.
+
+    [profile.release] 语法表示嵌套, 等价于 JSON 对象的子属性.
+
+    以上三项表配置分别代表 Release、Bench 和 Test 编译模式 除此之外, Cargo 还支
+    持 [profile.dev] 代表 Debug 模式.
+
+    在本例中, 当前的配置代表在 Release、Bench 和 Test 模式下, 均包含 Debug 信息.
+    除 debug 配置项外, 还支持用于自定义欧华级别的 opt-level、连接时间优化的 lto
+    等.
+    
+*** 子包 bench 中的 Cargo.toml
+    #+begin_src toml
+      [package]
+      # ...
+
+      # 设置构建脚本(当前包的根目录下)
+      build = "build.rs"
+      # 当前包根目录的上一层目录
+      workspace = ".."
+
+      [[bin]]
+      # 生成的可执行文件的名称
+      # 若想用其他文件名, 则必须放到 `src/bin` 目录下
+      name = "regex-run-one"
+      path = "src/main.rs"
+      # 希望生成可执行文件时不去执行基准测试
+      bench = false
+
+      [[bench]]
+      name = "bench"
+      path = "src/bench.rs"
+      test = false
+      bench = true
+    #+end_src
+
+    
