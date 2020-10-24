@@ -1,0 +1,10 @@
+[package]
+name = "static_hashmap"
+version = "0.1.0"
+authors = ["Kreedzt <zhaozisong1@live.com>"]
+edition = "2015"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lazy_static = "1.4.0"
