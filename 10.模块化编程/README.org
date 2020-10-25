@@ -667,3 +667,98 @@
 
     ~use~ 语句使用 ~crate~ 关键字前缀代表引入的是当前 ~crate~ 中定义的模块.
     ~self~ 表明以当前相对路径寻找. 如果是第三方包, 不需要写 ~crate~ 前缀.
+
+** 从 0 开始实现一个完整功能包
+   编写一个命令行工具, 可以接受一个 CSV 文件, 并且可以指定固定的值覆盖指定列的所
+   有数据, 然后将结果输出到新的 CSV 文件中.
+
+*** 使用 Cargo 创建新项目
+    input 文件夹放入源文件, output 用以存储输出文件
+
+    基本思路: 直接使用 ~std::env::args~ 或使用第三方包来解析参数
+
+*** 使用 structopt 解析命令行参数
+    可选的第三方包邮 2 个: clap 和 structopt. 其中 clap 的功能非常强大, 但是使用
+    起来没有那么直观; 而 structopt 则是在 clap 基础上构建而成的, 简化了操作. 所
+    以这里选用 structopt 包. 
+
+    因为 structopt 是基于 *过程宏(Procedural Macro)* 的, 所以它需要依赖
+    structopt-derive 包.
+
+    定义的 Opt 结构体用于构建以下命令:
+    #+begin_example
+      USAGE:
+          csv_challenge [FLAGS] <input> <column_name> <replacement> [output]
+    #+end_example
+    
+    - csv_challenge: 为编译后的可执行文件
+    - [FLAGS]: 为 Flag 参数, 一般侧重于表示 "开" 和 "关" 的标记.
+    - <input>: 表示输入文件, 也就是原始 CSV 文件路径. 对应于定义的 input 成员,
+      并通过 ~#[structopt...]~ 属性设置 help 说明文字
+    - <column_name>: 表示指定要替换的 CSV 文件头部字段. 它对应于字段 column_name.
+    - <replacement>: 表示要替换的值, 对应 replacement
+    - [output]: 表示输出的文件路径. 对应 output, 因为该参数可以省略, 由默认的输
+      出文件路径代替.
+
+
+    *警告*: 内容有改动
+    使用 ~cargo run~ 编译好后, 默认可执行文件在 ~target/debug/~ 下, windows 平台
+    为 *.exe, unix 平台为 *.out 或无后缀名. 执行 ~./target/debug/csv_challenge
+    --help~ 可以看到 structopt 生成的说明.
+
+*** 定义统一的错误类型
+    
+*** 读取 CSV 文件
+    *Rust 将文件路径抽象为两种类型*:
+    - *Path*: 没有所有权
+    - *PathBuf*: 独立所有权
+
+    以上对路径的抽象可以让开发者无视底层操作系统的差异, 统一处理文件路径.
+
+    在模块 ~std::fs~ 中定义了操作本地文件系统的基本方法, 使用其提供的 ~open()~
+    和 ~crate()~ 方法来打开和创建 CSV 文件. 在离开作用域的时候, *文件会被自动关闭*.
+** 进一步完善包
+   增加项目的测试和文档, Rust 支持 4 种测试: *单元测试*, *文档测试*, *集成测试*
+   和 *基准测试*. 其中基准测试专门用于性能测试.
+
+*** 单元测试
+   若想忽略已 ~#[test]~ 属性的函数测试, 只需在 ~#[test]~ 属性下面再添加
+   ~#[ignore]~ 属性即可.
+
+*** 集成测试
+    集成测试用于测试包的整体功能.
+
+    使用 ~main.rs~ 配合 ~lib.rs~ 的形式, 是二进制包的 *最佳实践*.
+
+*** 增加文档和文档测试
+    使用三斜线注释(~///~)可以为函数增加文档注释, 支持 Markdown 语法, 增加代码块
+    默认识别为 Rust 代码, 并且会 *执行文档测试*. 代码块语言定义为 *ignore* 时忽
+    略执行
+
+    使用 ~//!~ 在包的根模块或任意模块文件 *顶部* 增加模块级文档: 为整个模块而不
+    是单独为其下方的语法元素生成文档.
+
+    使用 ~cargo doc~ 生成文档, ~cargo doc --open~ 生成并打开文档
+
+*** 增加性能基准测试
+    Cargo 会识别当前包 ~benches~ 目录作为性能基准测试目录.
+
+    要使用性能基准测试, 必须启用 ~#[features(test)]~. 该功能必须在 ~nightly~ 版
+    本的 Rust 下可用.
+
+    ~test::Bencher~ 提供了 ~iter()~ 方法, 接收闭包作为参数. 若要写性能测试代码,
+    那么只要将其放到该闭包中即可.
+
+    使用 ~#[bench]~ 属性标注函数视为基准测试函数
+
+*** 发布到 crates.io
+    现在可以把具有完整功能的包发布到 *crates.io* 平台. 注册 crates.io 网站帐号后,
+    个人主页生成 Api Token, 配置到 ~.cargo/config~ 的 *[registry]* 下面, 然后使
+    用 ~cargo login~ 登录.
+
+    最后在包的根目录下使用 ~cargo publish~ 命令会自动将其编译打包上传到
+    crates.io 平台. 也可以单独使用 ~cargo package~ 命令先打包再发布. 打包以后的
+    文件可以在 ~target/package~ 目录下找到.
+
+    ~cargo publish~ 报错可能因为 *[packages]* 表中还缺失必要的元信息. 添加并发布
+    后, 其他开发者就可以通过 ~cargo install~ 命令来安装并使用此包.
