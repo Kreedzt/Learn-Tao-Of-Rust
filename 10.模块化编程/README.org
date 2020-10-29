@@ -801,6 +801,8 @@
    另外需要注意的是, 对于 *trait 中关联类型* 和 *Enum 中变体* 的可见性, 会随着
    trait 和 Enum 的可见性而变化. 但是结构体中的字段则不是这样的, 还需要单独使用
    ~pub~ 关键字来改变其可见性.
+** TODO 属性
+   [[https://doc.rust-lang.org/reference/attributes.html][Attributes]]
 ** 小结
    通过本章的学习, 我们对 Rust 的模块化编程有了较为全面的了解. 
 
