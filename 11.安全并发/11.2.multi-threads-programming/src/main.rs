@@ -1,10 +1,10 @@
-use std::panic;
-use std::thread::{current, spawn, Builder, park, sleep};
-use std::time::Duration;
-use std::sync::{Arc, Mutex, RwLock};
-use std::rc::Rc;
-use std::cell::RefCell;
 use rand::prelude::*;
+use std::cell::RefCell;
+use std::panic;
+use std::rc::Rc;
+use std::sync::{Arc, Barrier, Condvar, Mutex, RwLock};
+use std::thread::{current, park, sleep, spawn, Builder};
+use std::time::Duration;
 
 fn main() {
     // 11-7 创建线程
@@ -150,7 +150,7 @@ fn main() {
     // 11-21 使用 `Mutex` 在多线程环境中共享可变变量
     // let s = Arc::new(Mutex::new("Hello".to_string()));
     // let mut v = vec![];
-    
+
     // for _ in 0..3 {
     //     let s_clone = s.clone();
     //     let child = spawn(move || {
@@ -190,21 +190,21 @@ fn main() {
 
 
     // 11-24 完善抛硬币 `main` 函数
-    let total_flips = Arc::new(Mutex::new(0));
-    let completed = Arc::new(Mutex::new(0));
-    let runs = 8;
-    let target_flips = 10;
+    // let total_flips = Arc::new(Mutex::new(0));
+    // let completed = Arc::new(Mutex::new(0));
+    // let runs = 8;
+    // let target_flips = 10;
 
-    for _ in 0..runs {
-        let total_flips = total_flips.clone();
-        let completed = completed.clone();
+    // for _ in 0..runs {
+    //     let total_flips = total_flips.clone();
+    //     let completed = completed.clone();
 
-        spawn(move || {
-            flip_simulate(target_flips, total_flips);
-            let mut completed = completed.lock().unwrap();
-            *completed += 1;
-        });
-    }
+    //     spawn(move || {
+    //         flip_simulate(target_flips, total_flips);
+    //         let mut completed = completed.lock().unwrap();
+    //         *completed += 1;
+    //     });
+    // }
 
     // loop {
     //     let completed = completed.lock().unwrap();
@@ -215,7 +215,7 @@ fn main() {
     //     }
     // }
 
-    
+
     // 11-26 改为死锁代码
     // 始终持有互斥锁, 会导致所有子线程阻塞
     // 间接导致无法更新 `completed` 的值
@@ -226,17 +226,59 @@ fn main() {
 
 
     // 11-27 读写锁示例
-    let lock = RwLock::new(5);
-    {
-        let r1 = lock.read().unwrap();
-        let r2 = lock.read().unwrap();
-        assert_eq!(*r1, 5);
-        assert_eq!(*r2, 5)
-    }
-    {
-        let mut w = lock.write().unwrap();
-        *w += 1;
-        assert_eq!(*w, 6);
+    // let lock = RwLock::new(5);
+    // {
+    //     let r1 = lock.read().unwrap();
+    //     let r2 = lock.read().unwrap();
+    //     assert_eq!(*r1, 5);
+    //     assert_eq!(*r2, 5)
+    // }
+    // {
+    //     let mut w = lock.write().unwrap();
+    //     *w += 1;
+    //     assert_eq!(*w, 6);
+    // }
+
+
+    // 11-28 屏障示例
+    // let mut handles = Vec::with_capacity(5);
+    // let barrier = Arc::new(Barrier::new(5));
+
+    // for _ in 0..5 {
+    //     let c = barrier.clone();
+
+    //     handles.push(spawn(move || {
+    //         println!("before wait");
+    //         // 阻塞了线程
+    //         c.wait();
+    //         println!("after wait");
+    //     }));
+    // }
+
+    // for handle in handles {
+    //     handle.join().unwrap();
+    // }
+
+
+    // 11-30 条件变量示例
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    let pair_clone = pair.clone();
+    spawn(move || {
+        let &(ref lock, ref cvar) = &*pair_clone;
+        // 拿到互斥锁
+        let mut started = lock.lock().unwrap();
+        *started = true;
+        // 通知主线程
+        cvar.notify_one();
+    });
+
+    let &(ref lock, ref cvar) = &*pair;
+    // 拿到互斥锁
+    let mut started = lock.lock().unwrap();
+    while !*started {
+        println!("{}", started);
+        started = cvar.wait(started).unwrap();
+        println!("{}", started);
     }
 }
 
