@@ -2,7 +2,10 @@ use rand::prelude::*;
 use std::cell::RefCell;
 use std::panic;
 use std::rc::Rc;
-use std::sync::{Arc, Barrier, Condvar, Mutex, RwLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Barrier, Condvar, Mutex, RwLock,
+};
 use std::thread::{current, park, sleep, spawn, Builder};
 use std::time::Duration;
 
@@ -261,24 +264,40 @@ fn main() {
 
 
     // 11-30 条件变量示例
-    let pair = Arc::new((Mutex::new(false), Condvar::new()));
-    let pair_clone = pair.clone();
-    spawn(move || {
-        let &(ref lock, ref cvar) = &*pair_clone;
-        // 拿到互斥锁
-        let mut started = lock.lock().unwrap();
-        *started = true;
-        // 通知主线程
-        cvar.notify_one();
+    // let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    // let pair_clone = pair.clone();
+    // spawn(move || {
+    //     let &(ref lock, ref cvar) = &*pair_clone;
+    //     // 拿到互斥锁
+    //     let mut started = lock.lock().unwrap();
+    //     *started = true;
+    //     // 通知主线程
+    //     cvar.notify_one();
+    // });
+
+    // let &(ref lock, ref cvar) = &*pair;
+    // // 拿到互斥锁
+    // let mut started = lock.lock().unwrap();
+    // while !*started {
+    //     println!("{}", started);
+    //     started = cvar.wait(started).unwrap();
+    //     println!("{}", started);
+    // }
+
+
+    // 11-31 使用原子类型实现一个简单的自旋锁
+    let spinlock = Arc::new(AtomicUsize::new(1));
+    let spinlock_clone = spinlock.clone();
+    let thread = spawn(move || {
+        spinlock_clone.store(0, Ordering::SeqCst);
     });
 
-    let &(ref lock, ref cvar) = &*pair;
-    // 拿到互斥锁
-    let mut started = lock.lock().unwrap();
-    while !*started {
-        println!("{}", started);
-        started = cvar.wait(started).unwrap();
-        println!("{}", started);
+    // 若不为 0, 不停循环测试锁的状态, 直到状态被设置为 0
+    while spinlock.load(Ordering::SeqCst) != 0 {}
+
+    // 等待子线程完成, 并做相应的错误处理
+    if let Err(panic) = thread.join() {
+        println!("Thread had an error: {:?}", panic);
     }
 }
 
