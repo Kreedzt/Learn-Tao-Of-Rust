@@ -4,6 +4,7 @@ use std::panic;
 use std::rc::Rc;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
+    mpsc::{channel, sync_channel},
     Arc, Barrier, Condvar, Mutex, RwLock,
 };
 use std::thread::{current, park, sleep, spawn, Builder};
@@ -286,19 +287,89 @@ fn main() {
 
 
     // 11-31 使用原子类型实现一个简单的自旋锁
-    let spinlock = Arc::new(AtomicUsize::new(1));
-    let spinlock_clone = spinlock.clone();
-    let thread = spawn(move || {
-        spinlock_clone.store(0, Ordering::SeqCst);
-    });
+    // let spinlock = Arc::new(AtomicUsize::new(1));
+    // let spinlock_clone = spinlock.clone();
+    // let thread = spawn(move || {
+    //     spinlock_clone.store(0, Ordering::SeqCst);
+    // });
 
-    // 若不为 0, 不停循环测试锁的状态, 直到状态被设置为 0
-    while spinlock.load(Ordering::SeqCst) != 0 {}
+    // // 若不为 0, 不停循环测试锁的状态, 直到状态被设置为 0
+    // while spinlock.load(Ordering::SeqCst) != 0 {}
 
-    // 等待子线程完成, 并做相应的错误处理
-    if let Err(panic) = thread.join() {
-        println!("Thread had an error: {:?}", panic);
+    // // 等待子线程完成, 并做相应的错误处理
+    // if let Err(panic) = thread.join() {
+    //     println!("Thread had an error: {:?}", panic);
+    // }
+
+
+    // 11-33 两个线程之间使用 Channel 通信的简单示例
+    // let (tx, rx) = channel();
+    // spawn(move || {
+    //     tx.send(10).unwrap();
+    // });
+
+    // assert_eq!(rx.recv().unwrap(), 10);
+
+
+    // 11-34: 多生产者使用 Channel 通信示例
+    // let (tx, rx) = channel();
+    // for i in 0..10 {
+    //     let tx = tx.clone();
+    //     spawn(move || {
+    //         tx.send(i).unwrap();
+    //     });
+    // }
+
+    // for _ in 0..10 {
+    //     let j = rx.recv().unwrap();
+    //     assert!(0 <= j && j < 10);
+    // }
+
+
+    // 11-35 使用同步 Channel 通信示例
+    // let (tx, rx) = sync_channel(1);
+    // tx.send(1).unwrap();
+    // spawn(move || {
+    //     // 上一条消息被消费之前会一直阻塞, 知道 Channel 中缓冲区有可用空间才会继续发送
+    //     tx.send(2).unwrap();
+    // });
+
+    // assert_eq!(rx.recv().unwrap(), 1);
+    // // 同步 Channel 的缓冲区大小只为 1
+    // assert_eq!(rx.recv().unwrap(), 2);
+
+    // 11-36 会发生死锁的 Channel 示例 - 共享通道
+    let (tx, rx) = channel();
+    for i in 0..5 {
+        let tx = tx.clone();
+        spawn(move || {
+            tx.send(i).unwrap();
+        });
     }
+
+    // 解决死锁? 实际并没生效
+    // drop(tx);
+
+    // iter 方法会阻塞线程, 只要 tx 还没有被析构, 该迭代器就会一直等价新的消息
+    // 只有 tx 被析构之后, 迭代器才能返回 `None`
+    // 从而结束迭代退出 main 主线程.
+    // 然而. 这里 tx 并未被析构, 所以迭代器依旧等待, tx 也没有发送新的消息, 从而造成了一种死锁咋U搞两天
+    for j in rx.iter() {
+        println!("{:?}", j);
+    }
+
+
+    // 11-37 不存在死锁的 Channel 示例 - 流通道
+    // let (tx, rx) = channel();
+    // spawn(move || {
+    //     tx.send(1u8).unwrap();
+    //     tx.send(2u8).unwrap();
+    //     tx.send(3u8).unwrap();
+    // });
+
+    // for x in rx.iter() {
+    //     println!("receive: {}", x);
+    // }
 }
 
 
