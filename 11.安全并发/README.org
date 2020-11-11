@@ -900,3 +900,83 @@
     这种行为表现就像空间的线程去偷工作中的线程任务一样, 所以叫做 "工作窃取".
 
     Rayzon 的更多细节, 参考 [[https://github.com/rayon-rs/rayon/tree/master/rayon-demo][rayon-demo]]
+
+*** 使用 Crossbeam
+    Crossbeam 是比较常用的第三方类库, 在实际开发中通常用它来代替标准库. 它是对标
+    准库的扩展和包装, 一共包含 4 大模块.
+
+    - 用于增强 ~std::sync~ 的原子类型. 提供了 C++ 11 风格的 Consume 内存顺序原子
+      类型 AtomicConsume 和用于存储和检索的 Arc 的 ArcCell.
+    - 对于标准库 thread 和各种同步原语的扩展, 提供了很多使用的工具. eg: Scoped
+      线程、支持缓存行填充的 CachePadded 等
+    - 提供了 MPMC 的 Channel, 以及各种无锁并发数据结构. 包括: 并发工作窃取双端队
+      列、并发无锁队列(MS-Queue)和无锁栈(Treiber Stack)
+    - 提供了并发数据结构中需要的内存管理组件 crossbeam-epoch. 因为在多线程并发情
+      况下, 如果线程从并发数据结构中删除某个节点, 但是该节点还有可能被其他线程使
+      用, 则无法立即销毁该节点. Epoch GC 允许推迟销毁, 直到它变的安全. 在不久的
+      将来, 其还将支持险象指针(Hazard Pointer, HP) 和 QSBR(Quiescent-State-Based
+      Reclamation) 回收算法.
+
+**** 扩展原子类型
+     Crossbeam 的 crossbeam-utils 子包中提供了 AtomicConsume trait, 是对标准库中
+     原子类型内存顺序的增强. 该 trait 允许院子类型以 "Consume" 内存顺序进行读取.
+     "Consume" 内存顺序是 C++ 中支持的一种内存顺序, 可以称为 *消耗-释放顺序*. 相
+     对于获取-释放顺序而言, 消耗-释放顺序的性能更好. 因为获取-释放顺序会同步所有
+     写操作之前的读操作, 而消耗-释放顺序则只会同步数据之间有相互依赖的操作, 粒度
+     更细, 所以性能更好. 目前仅 ARM 和 AArch64 架构支持, 在其他架构上还是要回归
+     到获取-释放顺序.
+
+     通过 crossbeam-utils 包, 已经为标准库 ~std::sync::atomic~ 中的 AtomicBool、
+     AtomicUsize 等原子类型实现了该 trait, 只需要调用 ~load_consume()~ 方法就可
+     以使用该内存顺序.
+
+     在最新的 crossbeam-utils 包中, 还增加了一个原子类型 AtomicCell, 其等价于一
+     个具有原子操作的 ~Cell<T>~ 类型.
+
+**** 使用 Scoped 线程
+     在标准库生成的子线程中, 无法安全地使用父线程中的引用
+
+     实际上, 闭包中的 scope 参数是一个由内部使用的 Scope 结构体, 该结构体会负责
+     子线程的创建, ~join()~ 父线程和析构等工作, 以保证引用的安全.
+
+**** 使用缓存行填充提升并发性能
+     在并发编程中, 有一个号称 "无声性能杀手" 的概念叫做 *伪共享(False Sharing)*.
+     为了提升性能, 现代 CPU 都有自己的多级缓存. 而在缓存系统中, 都是以缓存行
+     (Cache Line) 为基本单位进行存储的, 其长度通常是 64 字节. 当程序中的数据存储
+     在彼此相邻的连续内存中时, 可以被 L1 级缓存一次加载完成, 享受缓存带来的性能
+     极致. 当数据结构中的数据存储在非连续内存中时, 则会出现缓存未命中的情况.
+
+     将数据存储在连续紧凑的内存中虽然克制带来高性能, 但是将其置于多线程下就会发
+     生问题. 多线程操作同一个缓存行的不同字节, 将会产生竞争, 导致线程彼此牵连,
+     相互影响, 最终变成串行的程序, 降低了并发性, 这就是所谓的伪共享. 因此, 为了
+     避免伪共享, 就需要将多线程之间的数据进行隔离, 使得它们不在同一个缓存行, 从
+     而提升多线程的并发性能.
+
+     避免伪共享的方案有很多, 其中一种方案就是刻意增大元素间的间隔, 使得不同线程
+     的存取单元位于不同的缓存行. Crossbeam 提供了 ~CachePadded<T>~ 类型, 可以进
+     行 *缓存行填充(Padding)*, 从而避免伪共享.
+
+     在 Crossbeam 提供的并发数据结构中就用到了缓存行填充. eg: 并发的工作窃取双端
+     队列 crossbeam-deque, 就用到了缓存行填充来避免伪共享, 提升并发性能.
+     
+**** 使用 MPMC Channel
+     Crossbeam 还提供了一个 ~std::sync::mpsc~ 的替代品 MPMC Channel, 也就是多生
+     产者单消费者通道. 标准库 mpsc 中的 Sender 和 Receiver 都没有实现 Sync, 但是
+     Crossbeam 提供的 MPMC Channel 的 Sender 和 Receiver 都实现了 Sync.
+
+     所以, 可以通过引用来共享 Sender 和 Receiver.
+
+     使用 ~channel::unbounded()~ 函数来创建 *无界通道*. Crossbeam 提供的 MPMC
+     Channel 和标准库的 Channel 类似, 也提供了 *无界通道* 和 *有界通道* 两种类型.
+
+     接下来, 使用 scope 函数创建了两个 Scoped 子线程, 并通过获取通道发送端 s 和
+     接收端 r 的引用来共享使用 Channel. 当然, 也可以通过 ~clone()~ 方法来共享通
+     道两端.
+
+     在 Crossbeam 中还提供了 ~select!~ 宏, 用于方便地处理一组通道中的消息.
+
+     ~select!~ 宏每次只会执行 *一个操作*. 对于 ~select!~ 宏来说, 如果同时有多个
+     操作已经准备就绪, 则会随机选择一个自信; 否则, 只选择最先准备就绪的那个操作
+     来执行.
+
+     在标准库 ~std::sync::mpsc~ 模块中也提供了 Select 类型, 但目前还是实验特性.
