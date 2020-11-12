@@ -980,3 +980,150 @@
      来执行.
 
      在标准库 ~std::sync::mpsc~ 模块中也提供了 Select 类型, 但目前还是实验特性.
+** 异步并发
+   本章开头的 "通用概念" 中已经介绍了异步并发相关背景, 了解到异步编程的发展一共
+   经历了三个阶段:
+   1. 直接使用回调函数, 随之带来的问题是 "回调地狱"
+   2. 使用 Promise/Future 并发模型, 解决了回调函数的问题, 但是代码依旧有很多冗余
+   3. 利用协程实现 async/await 解决方案, 也号称 "异步的终极解决方案"
+
+   目前, 很多编程语言都支持异步并发, 但并非都支持到第三个阶段. 
+
+   各种语言对异步编程的支持参差不齐, 但异步解决方案 async/await 几乎已经成为业界
+   的事实标准.
+
+   在经过一系列版本迭代之后, Rust 才确定了新的发展路线:
+   即: 成为能开发高性能网络服务的首选语言. 因此, Rust 引入了生成器, 随之又先后引
+   入了 Future 并发模型和 async/await 方案. 然而, 引入异步并发模型的过程并非一帆
+   风顺, 本来计划在 Rust 2018 稳定版中包含 async/await 语法, 但最后不得不延期.
+
+*** 生成器
+    如果要支持 *async/await* 异步开发, 最好是能有协程的支持. 所以, Rust 的第一步
+    是需要引进 *协程(Corotine)*.
+
+    协程的实现一般分为两种, 一种是 *有栈协程(Stackful)*; 另一种是 *无栈协程
+    (Stackless)*. 对于有栈协程的实现, 一般每个协程都自带独立的栈, 功能强大, 但是
+    比较耗内存, 性能不如无栈协程. 而无栈协程一般是基于 *状态机(State Machine)*
+    来实现的, 不使用独立的栈, 具体的应用形式 *生成器(Generator)*, 常见的有 ES6
+    和 Python 语言中支持的生成器. 这种形式的协程性能更好, 而功能要弱于有栈协程,
+    但也够用了. 在 Rust 标准库中支持的协程功能, 就属于无栈协程.
+
+**** 什么是生成器
+     创建的 Generator 形式上看像闭包, 但它不是闭包, 而是 *生成器*. 其中的
+     *yield* 是专门为生成器引入的关键字. 需要注意: 生成器不能像闭包那样接受参数.
+
+     生成器使用 yield 来设置状态, 然后通过调用 ~resume()~ 方法来达到状态的流转.
+     整个生成器实际上就是一个状态机.
+
+     返回的结果实际上是一种枚举类型 ~GeneratorState<Y, R>~, 该类型只包括
+     ~Yielded(Y)~ 和 ~Complete(R)~ 两种值. 其中 ~Yield(Y)~ 表示在生成器执行过程
+     中产生的各种状态, 也就是程序在生成器代码中挂起的位置; 而 ~Complete(R)~ 表示
+     生成器执行完成后最终返回的值.
+
+**** 生成器的实现原理
+     在 Rust 中 Generator 被定义为一个 trait:
+     #+begin_src rust
+       #[lang = "generator"]
+       #[unstable(feature = "generator_trait", issue = "43122")]
+       #[fundamental]
+       pub trait Generator<R = ()> {
+           // yield 状态类型
+           type Yield;
+           // 最终返回类型
+           type Return;
+
+           fn resume(self: Pin<&mut Self>, arg: R) -> GeneratorState<Self::Yield, Self::Return>;
+       }
+     #+end_src
+
+     生成器语法像闭包, 其实现原理也和闭包类似. 
+     eg: 11-62 中定义的生成器 gen, 将会由编译器自动生成一个匿名的枚举体, 然后为
+     该枚举体自动实现 Generator.
+
+     以下为等价代码, 实际编译器生成的代码要更复杂
+     #+begin_src rust
+       enum __Gen {
+           // 初始状态
+           Start,
+           State1(State1),
+           State2(State2),
+           State3(State3),
+           Done,
+       }
+
+       // 3 个结构体存储状态值
+       struct State1 {
+           x: u64,
+       }
+       struct State2 {
+           x: u64,
+       }
+       struct State3 {
+           x: u64,
+       }
+
+       // 为 __Gen 实现 `Generator`
+       impl Generator for __Gen {
+           // 指定类型
+           type Yield = u64;
+           // 指定类型
+           type Return = u64;
+
+           // 每次调用 `resume` fangfa, 其内部的 `self` 状态就会转移一次, 直到结束
+           unsafe fn resume(&mut self) -> GeneratorState<u64, u64> {
+               // 每次调用 `replace()` 方法, 都会将 `self` 的值替换为 `__Gen::Done`
+               // 然后返回替换前的值, 匹配该结果, 达到状态转移的目的
+               match std::mem::replace(self, __Gen::Done) {
+                   __Gen::Start => {
+                       ,*self = __Gen::State1(State1 { x: 1 });
+                       // 状态转移
+                       GeneratorState::Yielded(1)
+                   }
+                   __Gen::State1(State1 { x: 1 }) => {
+                       ,*self = __Gen::State2(State2 { x: 2 });
+                       GeneratorState::Yielded(2)
+                   }
+                   __Gen::State3(State3 { x: 3 }) => {
+                       ,*self = __Gen::Done;
+                       GeneratorState::Complete(4)
+                   }
+                   _ => panic("generator resumed after completion"),
+               }
+           }
+       }
+
+       fn main() {
+           let mut gen = __Gen::Start;
+
+           for _ in 0..4 {
+               println!("{:?}", unsafe { gen.resume() });
+           }
+       }
+     #+end_src
+     
+**** 生成器与迭代器
+     生成器是非常有用的一个功能. 如果只关注计算的过程, 而不关心计算的结果, 则可
+     以将 Return 设置为单元类型, 只保留 Yield 的类型, 也就是 ~Generator<Yield=T,
+     Return=()>~, 那么生成器就可以化身为迭代器.
+
+     *注意*: ~impl Trait~ 语法是在 Rust 2018 中加入的
+
+     生成器的性能比迭代器要高. 因为生成器是一种 *延迟计算* 或 *惰性计算*, 它避免
+     了不必要的计算, 只有在每次需要时才通过 yield 来产生相关的值.
+
+**** 用生成器模拟 Future
+     只关注生成器的计算过程而忽略结果, 生成器会化身为迭代器. 如果反过来, 不关心
+     过程, 只关注结果, 则可以将 Yield 设置为单元类型, 只保留 Return 的类型, 也就
+     是 ~Generator<Yield=(), Return=Result<T, E>>~, 生成器就可以化身为 Furture.
+
+     因为不关心执行器过程中的状态, 所以只要还在计算过程中, 就返回 *Pending*, 一
+     旦计算完成, 就返回 *Ready*.
+
+     *Future* 是一种 *异步并发模式*, 它实际上是 *代理模式* 和 *异步并发* 的混合
+     产物. Future 是对 "未来" 的一种代理凭证, 凭借这个凭证可以异步地在未来某个时
+     刻得到确定的结果, 而不需要同步等待. 
+
+     然而, 严格来说, 生成器属于一种 *半协程(Semi-Coroutine)*. 半协程是一种特殊的
+     且能力较弱的协程, 它只能在生成器和调用者之间进行跳转, 而不能在生成器之间进
+     行跳转. 所以, 要想支持完整的异步编程, 还需要在生成器的基础上进一步完善
+     Future 并发模式.
