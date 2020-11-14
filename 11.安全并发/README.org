@@ -1127,3 +1127,131 @@
      且能力较弱的协程, 它只能在生成器和调用者之间进行跳转, 而不能在生成器之间进
      行跳转. 所以, 要想支持完整的异步编程, 还需要在生成器的基础上进一步完善
      Future 并发模式.
+
+*** Future 并发模式
+    在实际的异步开发中, 需要将一个完整的功能切分为一个个独立的异步任务, 并且这些
+    任务之间还可能彼此依赖, 一个任务的输出也许是另一个任务的输入. 如果想要合理地
+    调度和高效地计算这些异步任务, 就需要一个完善的异步系统.
+
+    因此, Rust 对 Future 异步并发模式做了一个完整的抽象, 包含在第三方库
+    *futures-rs* 中. 该抽象主要包含三个核心部件:
+
+    - *Future*: 基本的异步计算抽象单元.
+    - *Executor*: 异步计算调度层
+    - *Task*: 异步计算执行层
+  
+**** Future
+     在 Rust 中, Future 是一个 trait.
+
+     ~std::future~ 模块中 Future trait 的源码
+     #+begin_src rust
+       #[doc(spotlight)]
+       #[must_use = "futures do nothing unless you `.await` or poll them"]
+       #[stable(feature = "futures_api", since = "1.36.0")]
+       #[lang = "future_trait"]
+       #[rustc_on_unimplemented(label = "`{Self}` is not a future", message = "`{Self}` is not a future")]
+       pub trait Future {
+           #[stable(feature = "futures_api", since = "1.36.0")]
+           type Output;
+
+           #[lang = "poll"]
+           #[stable(feature = "futures_api", since = "1.36.0")]
+           // 该方法为 `Future` 核心, 是对 `轮询` 行为的一层抽象
+           fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+       }
+     #+end_src
+
+     在 Rust 中, 每个 ~Future~ 都需要使用 ~poll()~ 方法来轮询索要计算值得状态.
+     该方法返回的 ~Pool~ 是一个枚举类型, 源码如下:
+     #+begin_src rust
+       #[must_use = "this `Poll` may be a `Pending` variant, which should be handled"]
+       #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+       #[stable(feature = "futures_api", since = "1.36.0")]
+       pub enum Poll<T> {
+           #[lang = "Ready"]
+           #[stable(feature = "futures_api", since = "1.36.0")]
+           // 准备好的状态抽象
+           Ready(#[stable(feature = "futures_api", since = "1.36.0")] T),
+
+           #[lang = "Pending"]
+           #[stable(feature = "futures_api", since = "1.36.0")]
+           // 未完成的状态抽象
+           Pending,
+       }
+     #+end_src
+
+**** Executor 和 Task
+     Future 只是一个基本的异步计算抽象单元, 具体的计算工作还需要由 Executor 和
+     Task 共同完成.
+
+     在实际的异步开发中, 会遇到频繁复杂的异步任务, 还需要一个专门的调度器来对具
+     体的任务进行管理统筹, 这个工具就是 Executor. 具体的异步任务就是 Task. 拿
+     future-rs 来说, Executor 是基于线程池实现的.
+
+     第三方库 future-rs 是由很多小的 crate 组合而成的, 其中 futures-executor 库
+     专门基于线程池实现了一套 Executor.
+
+     #+begin_example
+       struct ThreadPool             struct PoolState            enum Message           struct Task
+       state: Arc<PoolState>        tx: Sender<Message>            Run(Task)           future: FuturnObj
+                                    rx: Receiver<Message>          Close              wake_handle: Arc<WakeHandle>
+
+
+
+
+       Thread Pool   --------> new --------------> poolstate.work --------------> task.run
+           |                                            ↑                            |
+           |                                            |                            |
+           |                                            |                            |
+           |                                            |                            |
+           |                                            |           Poll::Ready      |
+           ↓                                            |    Complete <----- Future.poll_unpin   
+         spawn_obj                                      |                            |
+       PoolState: tx.send(Message::Run(task))           |                            |
+           |                                            |                            | Poll::Pending
+           |                                            |                            |
+           |               futures::mpsc::channel ------                             |
+           ------------->  | | | | | | | | | | | | <------------- wake <--------------
+                                                     PollState: tx.send(Message::Run(task))
+     #+end_example
+
+     关键复合类型:
+     
+     - *ThreadPool*: 结构体, 包含了一个字段 state, 设置为 ~Arc<PoolState>~ 类型,
+       是为了共享线程池内的线程信息
+     - *PoolState*: 结构体, 包含了 tx 和 rx 两个字段, 分别是 ~Sender<Message>~
+       和 ~Receiver<Message>~ 类型. 这两个类型看起来与 ~std::sync::mpsc~ 模块中
+       定义额用于 Channel 通信的发送端和接收端类似相似, 但实际上是
+       futures-channel 中定义额类型. 而 tx 和 rx 的作用是类似的, 同样用于
+       Channel 通信.
+     - *Message*: 枚举类型, 包含了两个枚举值, 其中最重要的就是 ~Run(Task)~. 该
+       Message 用作发送到 Channel 中的消息. 这样的消息包含两种可能: 其中一种是允
+       许 Task; 另一种是关闭线程池.
+     - *Task*: 结构体, 包含了 ~future~ 和 ~wake_handle~ 两个字段, 分别为
+       ~FutureObj~ 和 ~Arc<WeakHandle>~ 类型. 顾名思义, ~FutureObj~ 就是
+       ~Future~ 对象, 它实际上是 ~futures-executor~ 中实现的自定义 Future 对象,
+       它是对一个 Future trait 对象的一种包装; 而 ~WeakHandle~ 则是用来唤醒任务
+       的句柄.
+
+     Executor 提供了一个 *Channel*, 实际上就是一个任务队列. 开发者可以通过
+     ThreadPool 提供的 ~spawn_obj()~ 方法将一个异步任务(Task)发送(send)到
+     Channel 中. 实际上, 在 ~spawn_obj()~ 内部是通过 *PoolState* 结构体中存储的
+     发送端 *tx* 将 ~Message::Run(task)~ 发送到 Channel 中的.
+     
+     通过 ~ThreadPool::new()~ 方法, 可以从线程池中调用一个线程来执行具体的任务.
+     同时, 在该线程中也调用了 PoolState 结构体的 *work* 方法来消费 Channel 中的
+     消息. 实际上, ~work()~ 方法是通过 PoolState 结构体中存储的接收端 *rx* 接收
+     并消费 ~Message::Run(task)~ 的.
+
+     就这样, 由 ~spawn_obj()~ 往 Channel 中发送消息, 由 ~work()~ 来接收并消费消
+     息, 构成了一个完整的工作流程.
+
+     当 ~work()~ 方法接收到 ~Message::Run(task)~ 之后, 会调用 *Task* 中定义的
+     ~run()~ 方法来执行具体的 task. 在 ~run()~ 方法中, 调用存储于 task 实例中的
+     ~FutureObj~ 类型值得 ~poll_unpin()~ 方法, 将会执行具体的 ~poll()~ 方法, 返
+     回 Pending 和 Ready 两种状态. 如果是 Pending 状态, 则通过 task 实例存储的
+     WakeHandle 句柄将此任务再次唤醒, 也就是重新将任务发送到 Channel 中, 等待下
+     一次轮询; 如果是 Ready 状态, 则计算任务完成, 返回到上层进行处理.
+
+     以上就是整个 futures-rs 核心工作机制的简要概括. 我们可以从图中整体上把握并
+     建立 Rust 中 Future 异步开发的新值模型.

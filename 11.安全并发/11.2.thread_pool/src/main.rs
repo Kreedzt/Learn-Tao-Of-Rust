@@ -108,7 +108,7 @@ impl ThreadPool {
         // 若线程池中的工作线程一直处于正常工作状态
         while self.shared_data.has_work() {
             // 则调用 `empty_condvar` 的 `wait()` 方法来阻塞当前线程
-            // 知道获得解除阻塞的通知
+            // 直到获得解除阻塞的通知
             lock = self.shared_data.empty_condvar.wait(lock).unwrap();
         }
     }
@@ -176,7 +176,7 @@ fn spawn_in_pool(shared_data: Arc<ThreadPoolSharedData>) {
     // 注意: 此处使用的是 `thread` 模块的方法
     let mut builder = thread::Builder::new();
 
-    // 通过 `shared_ddata` 中存储的 `name` 和 `stack_size` 来定制生成线程
+    // 通过 `shared_data` 中存储的 `name` 和 `stack_size` 来定制生成线程
     if let Some(ref name) = shared_data.name {
         builder = builder.name(name.clone());
     }

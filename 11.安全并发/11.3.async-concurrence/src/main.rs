@@ -2,6 +2,7 @@
 use std::ops::{Generator, GeneratorState};
 // 代码变更, 见: https://github.com/ZhangHanDong/tao-of-rust-codes/issues/259
 use std::pin::Pin;
+use std::future;
 
 // 11-66 将生成器用作迭代器
 pub fn up_to() -> impl Generator<Yield = u64, Return = ()> {
