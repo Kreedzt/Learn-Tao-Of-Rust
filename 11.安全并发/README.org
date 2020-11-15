@@ -1255,3 +1255,170 @@
 
      以上就是整个 futures-rs 核心工作机制的简要概括. 我们可以从图中整体上把握并
      建立 Rust 中 Future 异步开发的新值模型.
+
+*** async/await
+    迄今为止, 第三方库 futures-rs 经历了三个阶段的迭代. 在 0.1 版本中, 开发者可
+    以通过 ~then()~ 和 ~and_then()~ 方法安排 Future 异步计算的执行顺序. 但是经过
+    一段时间的用户反馈后, 发现这种方式会导致很多混乱的嵌套和回调链, 不利于人体工
+    程学. 于是就引入了 async/await 解决方案. 又经过两个阶段后的重构为 0.3 版本.
+
+    #+begin_src rust
+      // futures-rs 0.1
+      fn download_and_write_tweets(
+          user: String,
+          socket: Socket,
+      ) -> impl Future<Output = io::Result<()>> {
+          pull_down_tweets(user)
+              .and_then(move |tweets| write_tweets(socket))
+      }
+
+      // futures-rs 0.3
+      async fn download_and_write_tweets(
+          user: &str,
+          socket: &Socket,
+      ) -> io::Result<()> {
+          let tweets = await!(pull_down_tweets(user))?;
+          await!(write_tweets(socket))
+      }
+    #+end_src
+
+    Rust 当前以 async 关键字配合 await! 宏来提供 async/await 异步开发方案.
+
+    *内容改动*:
+    现版本 async/await 已进入 stable. [[https://github.com/rust-lang/rust/issues/50547][Link]]
+
+    async/await 实际上是一种语法糖. async fn 会自动为开发者生成返回值是 ~impl
+    Future~ 类型的函数.
+
+**** async/await 实现原理
+     Rust 不仅仅支持使用 async fn 定义异步函数, 还支持 async 块
+
+     #+begin_src rust
+       let my_future = async {
+           await!(prev_async_func);
+           println!("Hello from an async block");
+       }
+     #+end_src
+
+     直接使用 async 块可以创建一个 Future. 实际上, 使用 async fn 定义函数在底层
+     也是又 async 块来生成 Future 的
+
+     由 async 块生成 Future 过程图:
+     #+begin_example
+       async ---------->   Generator -------------------> GenFuture --------------> impl Future
+         |                     |                             |                           |
+         |                     |                             |                           |
+         |                     |                             |                           |
+         |                     |                             |                           |
+         |                     |                             |                           |
+         |                     |                             |                           |
+         ↓                     ↓                             ↓                           ↓
+       keyword               yield              GenFuture<T: Generator<Yield = ()>>(T)
+       async fn             resume()                  impl Future for GenFuture         poll
+       async block                                          poll
+                                                          resume()
+     #+end_example
+
+     async 关键字无论是用来定义异步函数, 还是定义异步块, 在 Rust 将代码解析为
+     AST 之后, 在 HIR 层都会转换为 async 块的形式. 再将 async 块生成一个
+     ~Generator<Yield=()>~ 类型的生成器来使用. 然后将该生成器通过单元结构体
+     ~GenFuture~ 进行包装, 得到一个 ~GenFuture<T: Generator<Yield=()>>(T)~ 类型,
+     最后为该 ~GenFuture~ 实现 Future
+
+     为 ~GenFuture~ 实现 Future 源码
+     #+begin_src rust
+       impl<T: Generator<Yield = ()>> Future for GenFuture<T> {
+           type Ouput = T::Return;
+
+           fn poll(self: Pin<&mut Self>, lw: &LocalWaker)
+                   -> Pool<Self::Output>
+           {
+               set_task_waker(lw, ||
+                              // 此处调用了 `resume()` 函数,
+                              // 此处代码等价于: `&mut self.0.resume()`
+                              match unsafe { Pin::get_mut_unchecked(self).0.resume() }
+                              {
+                                  GeneratorState::Yielded(()) => Poll::Pending,
+                                  GeneratorState::Complete(x) => Poll::Ready(x),
+                              }
+               )
+           }
+       }
+     #+end_src
+     
+
+     接下来, 通过 ~std::future~ 模块中的 ~from_generator()~ 函数, 将实现了
+     ~Future~ 的 ~GenFuture~ 作为返回值插入编译器生成的代码中.
+
+     以上还需 ~await!~ 宏相互配合:
+     #+begin_example
+       async 块:
+                   prev Task
+           await! ---------->    Loop 块:
+                                 if task::Poll::Ready
+                                    break;
+                                 else yield
+     #+end_example
+
+     ~async!~ 宏必须在 async 块中使用, 不能单独使用. 因为 ~await!~ 宏实际展开的
+     代码要在 loop 循环中对轮询结果进行判断. 如果是 Ready 状态则跳出; 如果
+     Pending 则生成 yield. 正是因为这个 yield, 才允许 async 块生成一个
+     ~Generator<Yield = ()>~ 类型的生成器.
+
+**** Pin 与 Unpin
+     ~Pin<T>~ 是一个被定义域 ~std::pin~ 模块中的智能指针. 是在 Rust 2018 版本中
+     新增的语法, 在 Rust 1.30 版本中定型为 ~Pin<T>~.
+
+     *内容有改动*:
+     生成器会由编译器生成相应地结构体来记录咋 U 你给他, 当生成器包含对本地变量的引
+     用时, 该结构体会生成一种 *自引用结构体(Self-referential Struct)*. 
+     
+     代码清单 11-74(以上代码) 中生成器实例生成代码
+     #+begin_src rust
+       enum __Gen<'a> {
+           Start,
+           State1(State1<'a>),
+           State2(State2),
+           State3(State3),
+           Done
+       }
+
+       struct State1<'a> { x: u64, xref_x: &'a u64 }
+
+       impl<'a> Generator for __Gen<'a> {
+           match std::mem::replace(self, __Gen::Done) {
+               __Gen::Start => {
+                   let x = 1;
+                   let state1 = State1 { x: x, ref_x: &x };
+                   ,*self = __Gen::State1(state1);
+                   GeneratorState::Yielded(1)
+               }
+               __Gen::State1(State1 { x: 1, ref_x: &1 }) => {
+                   ,*self = __Gen::State2(State2 { x: 2 });
+                   GeneratorState::Yielded(2)
+               }
+           }
+       }
+     #+end_src
+
+     ~Pin<T>~ 实际上是一个包装了指针类型的结构体, 其中指针类型是指实现了 ~Deref~
+     的类型.
+
+**** async/await 异步开发示例
+     当然, 要想使用 Rust 进行异步开发, 需要配合使用标准库和第三方 futures-rs 库.
+     这是因为标准库中引入了 Future 和 Task 两种类型, 是为了配合实现 async/await
+     关键字. 而 Future 的大部分功能由 futures-rs 库可能会有所变化, 但是大体的原
+     理和机制基本不会改变, 要变的也只能是 API.
+
+     TODO: *警告*: 原始代码无法编译
+
+     回顾整个异步开发机制, 实际上可以总结为 2 点:
+     - 实现 Future, 构造异步任务
+     - 生成 Task, 计算异步任务
+
+     其中 Task 就像是在线程基础上又抽象出来的一层 "轻量级线程", 其使用语法也和线
+     程差不多, eg: 在 futures-rs 库中内置了 ~spawn_obj()~ 和 ~spawn()~ 等函数来
+     方便开发者将 Future 放入其中, 生成异步任务. 正因如此, 也有人将 Future 异步
+     开发体系称为 *用户级线程*.
+
+     在 futures-rs 库中还提供了很多方便组合或嵌套 Future 异步任务的各种组合函数.
