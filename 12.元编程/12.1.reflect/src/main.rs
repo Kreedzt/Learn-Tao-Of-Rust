@@ -12,6 +12,12 @@ struct S {
     z: u16,
 }
 
+struct Unstatic<'a> {
+    x: &'a i32,
+}
+
+static ANSWER: i32 = 42;
+
 // 注意: 因为参数类型是 trait 对象, 所以必须为引用
 fn print_any(a: &Any) {
     // 对转换结果匹配, 成功则打印相关内容
@@ -39,47 +45,63 @@ fn print_if_string(value: Box<Any>) {
 
 fn main() {
     // 12-3 使用 is 判断类型
-    let v1 = 0xc0ffee_u32;
-    let v2 = E::He;
-    let v3 = S {
-        x: 0xde,
-        y: 0xad,
-        z: 0xbeef,
-    };
-    let v4 = "rust";
+    // let v1 = 0xc0ffee_u32;
+    // let v2 = E::He;
+    // let v3 = S {
+    //     x: 0xde,
+    //     y: 0xad,
+    //     z: 0xbeef,
+    // };
+    // let v4 = "rust";
 
-    let mut a: &Any;
-    a = &v1;
-    assert!(a.is::<u32>());
-    println!("{:?}", TypeId::of::<u32>());
+    // let mut a: &Any;
+    // a = &v1;
+    // assert!(a.is::<u32>());
+    // println!("{:?}", TypeId::of::<u32>());
 
-    a = &v2;
-    assert!(a.is::<E>());
-    println!("{:?}", TypeId::of::<E>());
+    // a = &v2;
+    // assert!(a.is::<E>());
+    // println!("{:?}", TypeId::of::<E>());
 
-    a = &v3;
-    assert!(a.is::<S>());
-    println!("{:?}", TypeId::of::<S>());
+    // a = &v3;
+    // assert!(a.is::<S>());
+    // println!("{:?}", TypeId::of::<S>());
 
-    a = &v4;
-    assert!(a.is::<&str>());
-    println!("{:?}", TypeId::of::<&str>());
+    // a = &v4;
+    // assert!(a.is::<&str>());
+    // println!("{:?}", TypeId::of::<&str>());
 
 
     // 12-5 使用 `downcast_ref` 向下转换类型
-    print_any(&0xc0ffee_u32);
-    print_any(&E::He);
-    print_any(&S {
-        x: 0xde,
-        y: 0xad,
-        z: 0xbeef,
-    });
-    print_any(&"rust");
-    print_any(&"hoge");
+    // print_any(&0xc0ffee_u32);
+    // print_any(&E::He);
+    // print_any(&S {
+    //     x: 0xde,
+    //     y: 0xad,
+    //     z: 0xbeef,
+    // });
+    // print_any(&"rust");
+    // print_any(&"hoge");
 
 
     // 12-7 使用 `Box<Any>`
-    let my_string = "Hello World".to_string();
-    print_if_string(Box::new(my_string));
-    print_if_string(Box::new(0i8));
+    // let my_string = "Hello World".to_string();
+    // print_if_string(Box::new(my_string));
+    // print_if_string(Box::new(0i8));
+
+
+    // 12-9 非静态生命周期类型没有实现 `Any`
+    // let a = 42;
+    // let v = Unstatic { x: &a };
+    // let mut any: &Any;
+    // 编译错误
+    // any = &v;
+
+
+    // 12-10 使用静态生命周期类型的值创建 `Unstatic` 实例
+    // x 的生命周期为今天的, 引用也是静态的, 所以是实现了 `Any` 的类型.
+    let v = Unstatic { x: &ANSWER };
+    let mut a: &Any;
+    a = &v;
+    assert!(a.is::<Unstatic>());
 }
