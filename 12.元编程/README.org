@@ -158,3 +158,42 @@
 
     Rust 开发者可以编写特定的宏, 在编译时通过宏展开的方式操作抽象语法树, 从而达
     到语法扩展的目的.
+
+*** Rust 中宏的种类
+    Rust 的宏系统按定义的方式可以分为两大类:
+    - *声明宏* (Declarative Macro)
+    - *过程宏* (Procedural Macro)
+
+    *警告*: 内容有改动
+    声明宏是指通过 ~macro_rules!~ 声明定义的宏, 它是 Rust 中最常用的宏.(当前版本
+    已可在 Stable 下使用).
+
+    过程宏是编译器语法扩展的方式之一. Rust 允许通过特定的语法编写编译器插件, 但
+    该编写插件的语法还未稳定, 所以提供了过程宏来让开发者实现自定义派生属性的功能.
+    eg: Serde 库实现的 ~#[derive(Serialize, Deserialize)]~ 就是基于过程实现的.
+
+    具体到宏使用的语法形式又分为以下几种:
+    - *调用宏*: 形如 ~println!~, ~assert_eq!~, ~thread_local!~ 等可以当作函数调
+      用的宏. 这种形式的宏通常由声明宏来实现, 也可以通过过程宏实现.
+    - *属性宏*: 也就是形如 ~#[derive(Debug)]~ 或 ~#[cfg]~ 这种形式的语法. 这种形
+      式的宏可以通过过程宏来实现, 也可以通过编译器插件来实现.
+
+    按宏的 *来源*, 可以分为以下两类:
+    - *内置宏*: 指 Rust 本身内置的一些宏, 包括 2 种: 一种由标准库中具体的代码实
+      现, 另一种属于编译器固有行为.
+    - *自定义宏*: 指由开发者自己定义的声明宏或者过程宏等
+
+    内置宏展示
+    #+begin_src rust
+      #[macro_export]
+      #[stable(feature = "rust1", since = "1.0.0")]
+      #[allow_internal_unstable(print_internals, format_args_nl)]
+      macro_rules! println {
+          () => ($crate::print!("\n"));
+          ($($arg:tt)*) => ({
+              $crate::io::_print($crate::format_args_nl!($($arg)*));
+          })
+      }
+    #+end_src
+
+    
