@@ -1,0 +1,11 @@
+[package]
+name = "simple_proc_macro"
+version = "0.1.0"
+authors = ["Kreedzt <zhaozisong1@live.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# 编写过程宏必须要求放到 proc_macro 类型的 lib 包中
+proc_macro = true

@@ -478,3 +478,204 @@
      使用 macro 关键字重新定义宏的代码比 ~macro_rules!~ 定义的宏可读性更高
 
      在 ~1.50~ 版本的 Rust Nightly 中, 依旧存在此 feature, 不久的将来会稳定发布
+
+*** 过程宏
+    使用声明宏可以实现像函数一样被调用的宏, 但是也仅局限于代码自动生成的场景. 对
+    于需要语法扩展的场景用声明宏无法满足, eg: 为现有结构体自动生成特定的实现代码,
+    或者进行代码检查等. 在过程宏出现之前, 开发者可以通过 Rust 编译器的插件机制来
+    满足语法扩展的诸多需求. 但可惜的是, 这些插件机制并未稳定, 暂时只能在 Nightly
+    版本的 Rust 中使用 ~#![feature(plugin_register)]~ 这样的 feature 才能实现.
+
+    过程宏的工作机制:
+    #+begin_example
+                           操作
+        librustc_plugin ---------> AST
+                |
+                | 依
+                | 赖             - - - - - - - - - - - - - - - - - - - - -
+                |               |         ------- ---------- quote       |
+                ↓                         |                    | 
+         rustc libsyntax        |         |                    |         |
+                ↑                         |                   AST
+                | 依            |          |                   ↑         |
+                | 赖                       |                   |
+                |           操作 |         ↓                   |          |
+          libproc_macro ----------->  TokenStream  ------>   syn
+                                 |        |                              |
+                                 - - - - - - - - - - - - - - - - - - - - -
+                                          |
+                                          ↓
+                                      libsyntax  --------> AST
+                                        parser
+    #+end_example
+    
+    官方团队确定的一种方案是 *过程宏(Procedural Macros)*.
+
+    Rust 编译器插件机制由内置的 librustc_plugin 包提供, 它通过直接操作 AST 来
+    达成目的. 所以, 它依赖于内置的 libsyntax 包, 包中定义了词法分析、语法分析、
+    操作语法树相关的各种操作. 但要稳定发布给开发者, 就不能依赖于 AST 结构.
+
+    所以 Rust 官方团队在 libsyntax 的基础之上, 又抽象出一层通用的接口, 这套接口
+    就叫 *过程宏*, 它被定义于内置的 libproc_macro 包中, 过程宏建立在 *词条流*
+    (TokenStream) 的基础上, 开发者可以借助于过程宏输入词条流, 对其进行修改或替换,
+    最后将修改后的词条流输出, 交给语法解析器(libsyntax 中包含的 parser) 处理.
+    
+    基于词条流的好处在于未来不管语法如何变化, 都不会影响到过程宏的使用, 因为词法
+    分析不需要关心语法信息. 使用过程宏的时候, 可以直接把传入的词法流转为字符串处
+    理, 也可以配合另外两个第三方库来使用: *syn* 和 *quote*. 其中 sync 库可以将词
+    条流再次解析为 AST 结构, 然后开发者在此结构之上对其进行各种修改或替换, 最后
+    通过 quote 库, 将修改后的 AST 结构重新转换为词条流输出, 这样就比直接处理字符
+    串要方便、精准.(在上图右侧虚线框内)
+
+    学习 Rust 过程宏系统的时候, 需要了解一个 "变" 与一个 "不变".
+    - *变*: Rust 在上升发展期, 还在随时添加各种新的功能以及优化性能, 有可能会影
+      响到 AST 结构. 所以会把过程宏、编译器插件、syn、quote 读都独立出来, 以便更
+      好地将过程宏机制向开发者稳定发布.
+    - *不变*: 过程宏基于词条流, 不会随语法的不断变化而受影响.
+
+    但要明白, "变" 与 "不变" 只是指语言结构层面. eg: libproc_macro 库自身也在进
+    化, 现已出现 proc_macro2 库, 它是对 libproc_macro 库的进一步抽象和包装, 更易
+    于使用. 但基于词条流来处理过程宏的整体思路依然不变.
+
+    目前, 使用过程宏可以实现三种类型的宏:
+
+    - *自定义派生属性*: 可以自定义类似于 ~#[derive(Debug)]~ 这样的 derive 属性,
+      可以自动为结构体或枚举类型进行语法扩展. 在官方 RFC 或一些社区资料中, 过程
+      宏也被称为宏 1.1(Macro1.1).
+    - *自定义属性*: 可以自定义类似于 ~#[cfg()]~ 这种属性.
+    - *Bang 宏*: 和 ~macro_rules!~ 定义的宏类似, 以 Bang 符号(就是叹号 "!")结尾
+      的宏. 可以像函数一样被调用. 
+
+**** 自定义派生属性
+     *注意*: 使用自定义的派生属性过程宏, 需要用 ~#[macro_use]~ 将其导出
+
+     *注意*: proc_macro 包属于 Rust 自带包, 不需要在 Cargo.toml 中配置依赖. 引入
+     路径前的 self 前缀也不可省略.
+
+**** 自定义属性
+     派生属性的目的比较单一, 就是为了给结构体或枚举体自动派生各种实现, 而属性的
+     用途就相对比较多. 可以说自定义派生属性是自定义属性的特例. Rust 自身有很多内
+     置的属性, 比如条件编译属性 ~#[cfg()]~ 和测试属性 ~#[test]~, 早期版本的 Rust
+     可以通过编译器插件的方式来实现属性, 但插件的方式并未稳定, 不推荐使用. 过程
+     宏实现自定义属性的功能还未稳定. 在该版本稳定之前, 必须在 Nightly 版本下使用
+     ~#![feature(custom_attribute)]~ 特性. 从 1.31 开始不需要此特性.
+
+     
+**** 编写 Bang 宏
+     属性 ~#[proc_macro]~ 表示其下方的函数 ~hashmap~ 是要实现一个 Bang 宏, 该函
+     数签名输入和输出参数均为 TokenStream 类型.
+
+     过程宏实现 Bang 宏的思路与 ~macro_rules!~ 宏的思路相似, 都是拼接生成代码.
+
+     其 proc_macro 包中还提供了 ~TokenNode~, ~TokenTree~ 等结构体, 以及可以将这
+     些结构转换为 ~TokenStream~ 的 ~quote!~ 宏, 只不过目前该功能尚未完善, 要完成
+     当前示例, 使用你起来不如解析字符串来得方便.
+
+**** 使用第三方包 syn 和 quote
+     虽然官方的 proc_macro 包功能尚未完善, 但是 Rust 社区提供了方便的包可以使用.
+     通过 *syn* 和 *quote* 这两个包和 proc_macro2 的相互配合, 可以方便地处理大部
+     分需要用到过程宏的场景, eg: 自定义派生属性. 序列化框架包 serde 就大量使用了
+     syn 和 quote, 实际上, 这两个包就是 serde 作者在编写 serde 过程中实现的.
+
+     其中, syn 完整实现了 Rust 源码的语法树结构. 而 quote 可以将 syn 的语法树结
+     构转为 ~proc_macro::TokenStream~ 类型. 接下来使用 proc_macro、syn 和 quote
+     共同实现一个自定义派生属性功能 derive-new.
+
+     ~syn::DeriveInput~ 结构体源码示意:
+     #+begin_src rust
+       #[cfg_attr(doc_cfg, doc(cfg(feature = "derive")))]
+       pub struct DeriveInput {
+           // 实际为 `Vec<syn::Attribute>` 类型, `syn::Attribute` 代表属性
+           // eg: `#[repr(C)]`, 使用 `Vec<T>` 代表可以定义多个属性.
+           // 用于存储作用域结构体或枚举体属性
+           pub attrs: Vec<Attribute>,
+           // 为 `syn::Visibility` 类型, 代表结构体或枚举的可见性
+           pub vis: Visibility,
+           // 为 `syn::Ident` 类型, 将会存储结构体或枚举体的名称
+           pub ident: Ident,
+           // 为 `syn::Generics`, 用于存储泛型信息
+           pub generics: Generics,
+           // 为 `syn::Data`, 包括结构体、枚举体和联合体这三种类型
+           pub data: Data,
+       }
+     #+end_src
+
+     DeriveInput 结构体还实现了一个重要的 trait, 如下所示:
+     #+begin_src rust
+       impl Parse for DeriveInput {
+           fn parse(input: ParseStream) -> Result<Self> {
+               // ...
+           }
+       }
+
+       pub trait Parse: Sized {
+           fn parse(input: ParseStream) -> Result<Self>;
+       }
+     #+end_src
+
+     在 syn 0.15 之前, Parse 由 Synom 代替. 从 syn 0.15 开始, Synom 已移除.
+     
+     ~Parse~ 中定义了 ~parse~ 方法, 其输入参数类型为 ~syn::parse::ParseStream~,
+     用于 syn 内部解析 token 的缓冲流, 由 ~TokenStream~ 转换而成.
+
+     可以使用 ~parse_macro_input!~ 宏将任意输入参数转换为实现了 Parse 的类型. 在
+     本例中是 ~DeriveInput~ 结构体.
+     *注意*: 该宏使用的是固定格式的宏语法: ~parse_macro_input!(输入参数 as 目标
+     类型)~, 其中 ~as~ 后面必须指定明确的类型.
+
+     除了使用 ~parse_macro_input!~ 宏, 其实也可以直接调用 ~syn::parse()~ 函数来
+     解析输入参数 input. ~syn::parse()~ 函数来解析输入参数 input. ~syn::parse()~
+     函数可以将输入的词法流都解析为指定的数据结构, 也就是 AST.
+     
+     ~syn::parse()~ 函数签名示意
+     #+begin_src rust
+       pub fn parse<T: Parse>(&self) -> Result<T>
+     #+end_src
+
+     该函数内部会调用 ~T::parse()~ 方法. 所以 ~parse()~ 在解析 input 参数, 并将
+     其声明为 ~syn::DeriveInput~ 类型时, 就可以调用 ~syn::DeriveInput~ 中实现的
+     ~parse()~ 方法, 最终生成 ~syn::DeriveInput~ 类型实例.
+
+     syn 包主要是通过覆盖了 *全部 Rust 语法结构的自定义 AST 结构、~syn::Parse~
+     和 ~parse_macro_input!~ / ~syn::parse()~ 这三大要素*, 满足开发者方便地将传
+     入的 ~TokenStream~ 类型的词条流转化为指定的 syn AST. 另外, syn 还提供了功能
+     强大的 ~Token![...]~ 宏, 用于实现自定义的 AST.
+
+     syn 三大要素示意:
+     #+begin_example
+
+
+
+
+
+                                  impl Parse && Token![_ident]                  struct && impl Parse
+                                        Custom AST                                  syn::File
+                                             |        
+                                             |                                    enum && impl Parse
+                                             |                                      syn::Item
+       parse_macro_input!                    |
+         (input as T)       T:parse        trait                                  struct && impl Parse
+             OR          ------------->  syn::Parse  ---------------------------->  syn::DeriveInput
+          syn::parse<T>                   fn parse
+                                                                                  enum && impl Parse
+                                                                                    syn::Expr
+
+                                                                                  enum && impl Parse
+                                                                                    syn::Type
+     #+end_example
+
+     在 Rust 中, 一种有三种结构体, 那么 ~new_for_struct()~ 函数就必须同时满足这
+     三种结构体.
+
+     ~syn::punctuated::Punctuated<T, P>~ 类型结构用于存储由标点符号分隔的语法树
+     节点序列, 常用的如下:
+     - ~Punctuated<Field, Token![,]>~: 用逗号分隔的结构体字段序列
+     - ~Punctuated<PathSegment, Token![::]>~: 用双冒号分隔的路径序列
+     - ~Punctuated<TypeParamBound, Token![+]>~: 泛型参数序列
+     - ~Punctuated<Expr, Token[,]>~: 函数调用参数
+       
+     *补充*: 调试宏可以使用 [[https://github.com/dtolnay/cargo-expand][cargo-expand]] 包查看宏展开结果.
+     
+     TODO: 改进 ~#[derive(New)]~ 属性, 支持 ~#[new(value=xxx)]~ 为字段指定默认值,
+     需要用 ~[proc_macro_derive(New, attributes(new))]~ 宏, 然后在对应的 derive
+     函数中处理 attributes 的信息.
