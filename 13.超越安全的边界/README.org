@@ -1,0 +1,96 @@
+* 超越安全的边界
+  Rust 语言可以分为 *Safe Rust* 和 *Unsafe Rust* 两部分.
+
+  Safe Rust 涵盖了前面章节中所介绍的内容, 包括类型系统和所有权等静态分析机制. 在
+  使用 Safe Rust 的时候, 开发者完全不必担心由内存不安全的问题出现. 但是当需要和
+  其他语言交互, 甚至与底层操作系统或硬件设备交互的时候, 就只能依靠 Unsafe Rust.
+
+** Unsafe Rust 介绍
+   Unsafe Rust 是 Safe Rust 的一个超集. 也就是说, 在 Unsafe Rust 中, 并不会禁用
+   Safe Rust 中的任何安全检查.
+
+   即使在 Unsafe Rust 下, 如果依旧编写 Safe Rust 的代码, 也完全可以保证某种程度
+   的安全性.
+
+   Unsafe Rust 是指在进以下 5 种操作的时候, 并不会提供任何安全检查:
+   - 解引用裸指针
+   - 调用 unsafe 的函数或方法
+   - 访问或修改可变静态变量
+   - *实现* unsafe trait
+   - 读写 *Union* 联合体中的字段
+
+   这 5 种操作基本上适用于 Rust 和外部环境 "打交道" 的所有场景. 对于这些场景的操
+   作来说, Rust 的安全检查完全无用武之地, 反而会是一种障碍. eg: 解引用裸指针时,
+   也许会是一个空指针或悬垂指针, 此时就会造成未定义行为, 从而也就完全无法和外部
+   环境 "打交道" 了. 所以, 针对这 5 种操作, 就完全不提供任何安全检查.
+
+   Unsafe Rust 和 Safe Rust 的区分带来了 *以下三方面结果*:
+   - Unsafe Rust 由于不需要安全检查, 意味着有一定的性能提升
+   - Unsafe Rust 内存安全完全交给开发者来验证, 否则会出现未定义行为
+   - 区分了编译器和开发者的职责, 如果代码出现了问题, 可以先排查 Unsafe Rust 的代
+     码
+
+   *注意*: Unsafe Rust 的存在并不与 Safe Rust 相矛盾, 也不与 Rust 语言保证内存安
+   全的目标相冲突. 反而是 Unsafe Rust 的存在成就了 Rust.
+
+*** Unsafe 语法
+    通过 unsafe 关键字和 unsafe 块就可以使用 Unsafe Rust, 它们的作用如下:
+    - *unsafe 关键字*: 用于标记(或者说声明)函数、方法和 trait.
+    - *unsafe 块*: 用于执行 Unsafe Rust 允许的 5 种操作
+
+**** unsafe 关键字
+     Rust 标准库中包含了很多倍 unsafe 关键字标记的函数、方法和 trait.
+     
+     String 中内置的 unsafe 函数示意:
+     #+begin_src rust
+       #[inline]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       // 此处的 unsafe 表明未对传入的参数进行任何合法验证
+       // 如果传入的是一个非法的 UTF-8 字节序列, 则会出现内存不安全的问题
+       // 表明使用该函数时有可能会发生违反 "契约" 的风险
+       pub unsafe fn from_utf8_unchecked(bytes: Vec<u8>) -> String {
+           String { vec: bytes }
+       }
+     #+end_src
+
+     函数 ~from_utf8_unchecked()~ 的 "契约" 是指: 传入的参数是有效的 UTF-8 字节
+     序列. 这就是 unsafe 关键字存在的意义. 该函数被标记上 unsafe 之后, 使用该函
+     数的开发者就会主动去了解这一 "契约", 看看当前的使用是否满足 "契约" 的要求.
+     如果开发者没有做到满足 "契约" 的要求, 将来出现了问题, 也可以在 unsafe 标记
+     的范围内排查问题.
+
+     所以, 在使用 Rust 编写一个函数的时候, 需要注意该函数在使用的时候是否存在违
+     反 "契约" 的风险. 如果存在风险, 请使用 unsafe 关键字将其标记出来, 在其他人
+     使用该函数时, 就可以多加注意. 这里最大的风险在于: 如果一个函数存在违反 "契
+     约" 的风险, 而开发者并没有使用 unsafe 关键字将其标记, 那该函数就很可能成为
+     Bug 的 "温床".
+
+     除标记函数或方法外, *unsafe* 也用于标记 trait.
+
+     标准库中包含的 *unsafe trait* 有 *Send* 和 *Sync*. 编译器依赖 Rust 内置的类
+     型和内部严格的规则, 为开发者自定义的类型自动实现者两个 trait, 这是 Rust 能
+     保证并发安全的基石. 使用 unsafe 对 Send 和 Sync 进行标记, 就意味着开发者手
+     动实现它会有安全风险.
+
+     标准库中另外一个 unsafe trait 就是 ~std::str::pattern::Searcher~, 在字符串
+     章节中已介绍过它, 它是字符串搜索模式的抽象, 提供了一系列方法, 行为像迭代器.
+
+     Searcher 示意:
+     #+begin_src rust
+       pub unsafe trait Searcher<'a> {
+           // ...
+           fn next(&mut self) -> SearchStep;
+           // ...
+       }
+     #+end_src
+
+     此处不在 ~next()~ 上标记 unsafe 的原因: 要实现 Searcher 里的 ~next()~ 方法,
+     必须要保证其返回的索引位于有效的 UTF-8 边界上, 否则会出现内存不安全的问题.
+     而依据 Searcher 的工作机制来看, ~next()~ 方法并不会引起任何内存不安全问题,
+     只是它的返回结果在另外一个地方使用才会发生问题. 而考虑到字符串检索的性能,
+     Searcher 也不想对结果进行检查. 所以, 这里只能给 trait 加上 unsafe 标记, 以
+     此来警告实现该 trait 的开发者在实现该 trait 时必须遵守这些条件. 另外, 在实
+     现 unsafe trait 的时候, 也必须相应地使用 *unsafe impl* 才可以.
+
+**** unsafe 块
+     *被 unsafe 关键字标记的不安全函数或方法只能在 unsafe 块中被调用*
