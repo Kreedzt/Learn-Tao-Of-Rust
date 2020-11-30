@@ -256,3 +256,97 @@
      #+end_src
 
      因为有越界断言和容量极限判断, 所以可以不必在方法签名前面加 unsafe 标签.
+*** 子类型与形变
+    *子类型(subtype)* 在计算机科学中是相对另外一种有替代关系的数据类型(父类型,
+    supertype)而言的. 一般来说, 可以用在父类型的地方, 也可以用子类型来替代. 在类
+    型理论中, 子类型关系一般写为: *A<:B*, 这意味着 A 是 B 的子类型.
+
+    在面向对象语言中, 子类型也被称为 *子类型多态(subtype polymorphism)*, 通过多
+    态消除了类型之间的耦合性, 实现统一接口. eg: 在需要圆形工作的环境, 也可以使用
+    其他任何圆形几何体(eg: 圆环), 它们的关系可表示为 *Ring<:Circle*. 在面向对象
+    语言中, 一般用 *[[https://zh.wikipedia.org/wiki/%E9%87%8C%E6%B0%8F%E6%9B%BF%E6%8D%A2%E5%8E%9F%E5%88%99][里氏替换原则]]* (Liskov Substitution Principle, LSP) 来描述这
+    种关系: 所有引用基类(父类)的地方必须能透明地使用其子类的对象. 通俗的说: 允许
+    子类可以方便扩展父类的功能, 但不能改变父类原有的功能. LSP 是接口设计和继承复
+    用的基石, 遵循该原则可以让代码有更好的维护性和复用性.
+
+**** 型变的基本概念
+     在原始类型的基础上通过类型构造器构造更复杂的类型时, 原始类型的子类型关系在
+     复杂类型之上如何变化, 也是支持子类型编程语言需要考虑的问题. 计算机科学中把
+     根据原始子类型关系确定复杂类型子类型关系的规则则称为 *型变* (variance).
+
+     型变一般可以分为 3 种形式:
+     - *协变(covariant)*: 可以继续保持子类型关系.
+       eg: Cat 是 Animal 的子类型, 那么 List<Cat> 也是 List<Animal> 的子类型
+     - *逆变(contravariant)*: 逆转子类型关系.
+       eg: Cat 是 Animal 的子类型, 那么 List<Animal> 是 List<Cat> 的子类型
+     - *不变(invariant)*: 即不保持, 也不逆转子类型关系.
+       eg: Cat 是 Animal 的子类型, 但 List<Animal> 和 List<Cat> 无关系
+
+     Rust 语言中 *只有生命周期具有子类型关系*. 
+     eg: 有生命周期满足 ~'long: 'short~ 这样的关系, 可以说 ~'long~ 是 ~'short~
+     的子类型, 这个关系代表生命周期 ~'long~ 存活的时间比 ~'short~ 要长, 也可以说,
+     长生命周期是短生命周期的子类型. 
+     eg2: ~&'static str~ 是 ~&'a str~ 的子类型.
+
+     
+**** 未合理使用型变将会引起未定义行为
+     13-17 存在 *未定义行为的风险*, 但是依旧可以编译运行. 原因为: *协变类型*.
+     传入的生命周期为 ~&'static i32~, 因为 ~&'static i32~ 是 ~&'a i32~ 的子类型,
+     所以 ~&MyCell<&'static i32>~ 是 ~&MyCell<&'a i32>~ 的子类型, 按照子类型的规
+     则, 两者可以代替.
+
+     实际上, Rust 允许这种协变是以 *忘记原始生命周期* 为代价的. 所以 ~&val~ 的生
+     命周期 ~'a~ 允许协变而成为 ~'static~, 借用检查通过.
+
+     可以把 ~MyCell<T>~ 的协变性质改成逆变或不变就可以.
+
+**** 使用 PhantomData<T>
+     ~PhantomData<T>~ 是一个 *零大小类型的标记结构体*, 也叫做 "*幻影类型*", 在需
+     要制定一个并不使用的类型时, 就可以使用它, 初次之外, ~PhantomData<T>~ 还扮演
+     以下三种其他角色:
+     - *型变*: 可以产生协变、逆变和不变三种情况
+     - *标记拥有关系*: 和 drop 检查有关
+     - *自动 trait 实现*: eg: Send 和 Sync
+     
+**** 协变、逆变与不变类型列表
+     *更多参考*: [[https://doc.rust-lang.org/nomicon/subtyping.html][nomicon-subtyping]]
+
+     Rust 中的几个重要的型变类型:
+     - ~&'a T~ 在 ~'a~ 和 ~T~ 上是协变, 对应的 ~*const T~ 也是协变
+     - ~&'a mut T~ 在 ~'a~ 上是协变, 但是在 ~T~ 上是不变
+     - ~Fn(T)->U~ 在 ~T~ 上是不变, 在 ~U~ 上是协变
+     - ~Box<T>~, ~Vec<T>~ 以及其他集合对于它们包含的类型来说都是协变.
+     - ~UnsafeCell<T>~, ~Cell<T>~, ~RefCell<T>~, ~Mutex<T>~, 以及其他内部可变类
+       型在 ~T~ 上都是不变, 对应的 ~*mut T~ 也是不变.
+
+     *警告*: 此处有争议: [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/295][issue]]
+     eg: ~&mut &'static~ 和 ~&mut &'a str~ 不存在子类型关系, 所以它们是不变. 如
+     果允许协变, 将会有产生未定义行为的可能. 所以, ~UnsafeCell<T>~ 等内部可变性
+     (包括可变原生指针 ~*mut T~) 都是 *不变*.
+
+     对结构体来说, 如果包含的字段全部是协变, 则结构体是协变, 否则为不变. 所以,
+     对 ~Phantomdata<T>~ 类型来说, 则有以下规则:
+
+     - ~PhantomData<T>~: 在 ~T~ 上是协变
+     - ~PhantomData<&'a T>~: 在 ~'a~ 和 ~T~ 上是协变
+     - ~PhantomData<&'a mut T>~: 在 ~'a~ 上是协变, 在 ~T~ 上是不变
+     - ~PhantomData<*const T>~: 在 ~T~ 上是协变
+     - ~PhantomData<*mut T>~: 在 ~T~ 上是不变
+     - ~PhantomData<fn(T)>~: 在 ~T~ 上是逆变, 如果以后修改语法, 会成为不变
+     - ~PhantomData<fn() -> T>~: 在 ~T~ 上是协变
+     - ~PhantomData<fn(T) -> T>~: 在 ~T~ 上是不变
+     - ~PhantomData<Cell<&'a ()>>~: 在 ~'a~ 上是不变
+
+     Rust 中仅存在 ~fn(T)~ 的 *逆变情况*.
+
+     从 13-19 代码中, 得出以下结论:
+     - ~fn(T)~ *在实现 trait 方法时, 是逆变*. 因为 ~&'static str<: &'a str~, 而
+       现在 ~fn(&'a str)~ 可以替代需要 ~fn(&'static str)~ 的情况, 所以得出
+       ~fn(&'a str) <: fn(&'static str)~, 逆转了原有类型的子类型关系.
+     - *普通的函数调用, 参数是不变*: 当参数需要 ~&'static str~ 类型时, 不能用
+       ~&str~ 代替它. 但是函数的返回值是协变, 当返回值是 ~&str~ 的时候, 可以返回
+       ~&'static str~ 类型的值作为替代.
+       
+     *在不久的将来, Rust 官方有可能取消逆变*.
+
+     *当协变不会引起未定义行为的时候, 可以用协变, 否则就保证该类型为不变或逆变*.
