@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::mem::transmute;
 
 // 13-16 自定义内部可变类型 `MyCell<T>`
 // struct MyCell<T> {
@@ -57,38 +58,42 @@ use std::marker::PhantomData;
 
 
 // 13-19: `fn(T)` 的逆变示例
-trait A {
-    fn foo(&self, s: &'static str);
-}
+// trait A {
+//     fn foo(&self, s: &'static str);
+// }
 
-struct B;
+// struct B;
 
-impl A for B {
-    // 逆变
-    fn foo(&self, s: &str) {
-        println!("{:?}", s);
-    }
-}
+// impl A for B {
+//     // 逆变
+//     fn foo(&self, s: &str) {
+//         println!("{:?}", s);
+//     }
+// }
 
-impl B {
-    // 不变
-    fn foo2(&self, s: &'static str) {
-        println!("{:?}", s);
-    }
-}
+// impl B {
+//     // 不变
+//     fn foo2(&self, s: &'static str) {
+//         println!("{:?}", s);
+//     }
+// }
 
 
 // 13-20: 另一个 `fn(T)` 逆变示例
-fn foo(input: &str) {
-    println!("{:?}", input);
-}
+// fn foo(input: &str) {
+//     println!("{:?}", input);
+// }
 
-// &'static str 是 &str 的子类型
-// &'static str <: &str
-// fn(&str) <: fn(&'static str) 逆变
-fn bar(f: fn(&'static str), v: &'static str) {
-    (f)(v);
-}
+// // &'static str 是 &str 的子类型
+// // &'static str <: &str
+// // fn(&str) <: fn(&'static str) 逆变
+// fn bar(f: fn(&'static str), v: &'static str) {
+//     (f)(v);
+// }
+
+
+// 13-21 从原生指针得到引用
+fn foo<'a>(input: *const u32) -> &'a u32 { unsafe { return &*input } }
 
 fn main() {
     // 13-11 创建空指针并判断是否为空指针
@@ -186,6 +191,29 @@ fn main() {
 
 
     // 13-20
-    let v: &'static str = "hello";
-    bar(foo, v);
+    // let v: &'static str = "hello";
+    // bar(foo, v);
+
+
+    // 13-21
+    // let x;
+    // {
+    //     let y = 42;
+    //     // 悬垂指针
+    //     // foo 函数产生了一个未绑定生命周期的借用, 所以跳过了借用检查
+    //     x = foo(&y);
+    // }
+    // println!("hello: {}", x);
+
+
+    // 13-22 使用 `transmute` 函数得到引用
+    let x: &i32;
+    {
+        let a = 12;
+        let ptr = &a as *const i32;
+        // 该函数可以将类型 `T` 转为类型 `U`
+        // 这是一个 unsafe 函数, 使用不当会产生未定义行为
+        x = unsafe { transmute::<*const i32, &i32>(ptr) };
+    } // 离开作用域后, x 依旧产生悬垂指针
+    println!("hello {}", x);
 }
