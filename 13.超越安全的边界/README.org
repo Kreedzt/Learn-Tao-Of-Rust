@@ -141,3 +141,118 @@
     
     解引用随意定义的裸指针会引发 *段错误(Segmentation Fault)*. 无法确定它所指向
     的是否为合法内存.
+
+** 基于 Unsafe 进行安全抽象
+   通过 unsafe 关键字和 unsafe 块可以执行一些跳过安全检查的特定操作, 但并不代表
+   使用了 unsafe 就不安全. 在日常开发中, 往往需要在 unsafe 的基础上抽象安全的函
+   数. 使用 unsafe 块的函数需要满足基本的 "契约", 才能保证整改函数的安全性. 除此
+   之外, 还需要了解一些其他的概念, 才能更安全地使用 Unsafe Rust.
+
+*** 原生指针
+    原生指针是 Unsafe Rust 中最常用的, 它主要由以下两种用途:
+
+    - *在需要的时候跳过 Rust 安全检查*: 有些情况下, 程序逻辑完全不会有任何的内存
+      安全问题, 使用原生指针就可以避免那些不必要的安全检查, 从而提升性能.
+    - *与 C 语言 "打交道"*: 需要使用原生指针
+
+    标准库为原生指针内建了很多方法和函数, 为开发者利用指针进行各种操作提供了方便.
+    在此主要介绍以下几个内建函数和方法:
+
+    - ~std::ptr::null()~ 函数和 ~is_null()~ 方法
+    - ~offset()~ 方法
+    - ~read/write~ 方法
+    - ~replace()/swap()~ 方法
+
+    这几个是比较常用的函数和方法, 在标准库原生指针模块中还有其他很多方法.
+
+**** 创建空指针
+     可以通过 ~std::ptr~ 模块提供的 ~null()~ 函数创建一个空指针, 通过
+     ~is_null()~ 方法啊可以判断其是否为空.
+
+     因字符串是以字节为单位存储的, 所以指针的类型为 ~*const u8~.
+
+     在创建空指针的时候, 并不会引起任何未定义行为, 所以不需要使用 unsafe 块.
+
+**** 使用 offset 方法
+     顾名思义, *offset* 就是指 *偏移量*, 通过该方法可以指定相对于指针地址的偏移
+     字节数, 从而得到相应地址的内容.
+     
+     *解引用操作优先级低于方法调用, 但高于 as 操作符*. offset 方法以字节为单位指
+     定偏移量. 如果超出边界, 就可能产生未定义行为, 所以该方法被标记为 unsafe 方
+     法.
+
+**** 使用 read/write 方法
+     通过 read 和 write 方法可以读取或写入指针相应内存中的内容. 
+     *注意*: 这两个方法也是 unsafe 方法.
+
+     通过 ~read()~ 方法可以读取当前指针指向的内存, 但不会转移所有权. 也就是说:
+     在该指针读取完内存之后, 该内存有可能会被其他内容覆盖.
+
+     *注意*: 通过 ~as_ptr()~ 得到的指针是字符串或数组内部的指向存放数据堆(或栈)
+     内存的指针, 而引用则是对字符串或数组本身的引用.
+
+     ~write()~ 方法会覆盖掉指定位置上内存的内容
+
+**** 使用 replace/swap 方法
+     利用 ~replace()~ 或 ~swap()~ 方法, 可以快速替换指定位置的内存数据.
+
+     ~replace()~ 方法替换指针指向的数据
+
+     ~swap()~ 方法将其指向内存位置上的数据进行互换.
+     *警告*: 操作的内存区域可能有重叠的地方, 这种曹忠很有可能引起内部数据混乱,
+     从而引发未定义行为, 所以也是 unsafe 方法.
+
+     ~std::mem~ 模块中提供了一个安全的 swap 方法, 其函数签名为 ~fn swap<T>(x:
+     &mut T, y: &mut T)~, 注意其参数为可变引用. 因为可变引用是独占的, 不可能对同
+     一个变量进行两次可变借用, 所以就保证了该方法不可能出现内存重叠的情况. 同样,
+     ~std::mem~ 模块中也提供了 *安全的 replace* 方法.
+
+**** 使用原生指针进行安全抽象
+     在标准库中有很多方法是基于 Unsafe Rust 实现的安全抽象. eg: ~Vec<T>~ 动态数
+     组的 ~insert()~ 方法. 假设使用 Safe Rust 来实现 ~insert()~ 方法, 将无法避免
+     使用多次 ~&mut Vec<T>~. Safe Rust 的借用检查不允许对同一个变量进行多次可变
+     借用. 在这种情况下, 使用原生指针是唯一的办法.
+
+     ~Vec<T>~ 的 ~insert()~ 方法源码
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub fn insert(&mut self, index: usize, element: T) {
+           #[cold]
+           #[inline(never)]
+           fn assert_failed(index: usize, len: usize) -> ! {
+               panic!("insertion index (is {}) should be <= len (is {})", index, len);
+           }
+
+           let len = self.len();
+           // 断言保证 index 的值不能超过数组长度(越界检测)
+           if index > len {
+               assert_failed(index, len);
+           }
+
+           // space for the new element
+           // 判断长度是否达到容量的极限
+           if len == self.buf.capacity() {
+               self.reserve(1);
+           }
+
+           unsafe {
+               // 完整的插入逻辑, 放到独立的代码块
+               // infallible
+               // The spot to put the new value
+               {
+                   let p = self.as_mut_ptr().add(index);
+                   // Shift everything over to make space. (Duplicating the
+                   // `index`th element into two consecutive places.)
+                   // 将当前位置的内容右移一位
+                   ptr::copy(p, p.offset(1), len - index);
+                   // Write it in, overwriting the first copy of the `index`th
+                   // element.
+                   // 写入新的元素
+                   ptr::write(p, element);
+               }
+               self.set_len(len + 1);
+           }
+       }
+     #+end_src
+
+     因为有越界断言和容量极限判断, 所以可以不必在方法签名前面加 unsafe 标签.
