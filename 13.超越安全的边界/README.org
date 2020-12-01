@@ -375,7 +375,7 @@
 
     一般来说, 析构函数的调用顺序与变量的声明顺序相反. 也就是说, 如果存在明确的声
     明顺序, 则编译器可以推断析构函数的调用顺序. 但是对于同时声明的情况, eg: 声明
-    一个元组是2, 其内部元素的生命周期是相同的, 编译器无法推断到底该先调用谁的析
+    一个元组是 2, 其内部元素的生命周期是相同的, 编译器无法推断到底该先调用谁的析
     构函数. 当出现这种情况的时候, 就容易产生悬垂指针.
 
 **** 在 Safe Rust 中由 dropck 引起的问题 [Rust 1.50 Nightly 中尚未存在此问题]
@@ -597,3 +597,47 @@
      可能引发的恐慌, 则需小心. 数组的长度已经确定, 但是还有未初始化的内存, 整改
      数据结构的不变性被破坏了. 所以 Rust 编译器也不会允许开发者在 ~push_all()~
      函数中使用 ~catch_unwind()~.
+*** 堆内存分配
+    在编写 Unsafe Rust 的过程中, 也需要手动进行堆内存分配, 所以 Rust 标准库
+    ~std::alloc~ 模块中也提供了堆内存分配的相关 API.
+
+    Rust 在 *1.28 之前* 默认都是使用 *jemalloc* 作为默认内存分配器, 虽然
+    jemalloc 很强大, 但它也带来不少问题, 所以 Rust 1.28 中将 jemalloc 分配器 *从
+    标准库中剥离* 了出来, 作为一个可选的第三方库而存在, *标准库默认分配器就是
+    System 分配器*.
+
+    在 ~std::alloc~ 模块中有一个 ~GlobalAlloc~ trait, 其源码如下所示:
+    #+begin_src rust
+      #[stable(feature = "global_alloc", since = "1.28.0")]
+      pub unsafe trait GlobalAlloc {
+          // 内存分配
+          #[stable(feature = "global_alloc", since = "1.28.0")]
+          unsafe fn alloc(&self, layout: Layout) -> *mut u8;
+
+          // 内存释放
+          #[stable(feature = "global_alloc", since = "1.28.0")]
+          unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout);
+      }
+    #+end_src
+
+    *注意*: GlobalAlloc 和其定义方法都用 unsafe 做了标记.
+    要实现该 trait, *必须注意遵守以下约定*:
+
+    - 若全局分配器发生了恐慌, 则会产生未定义行为
+    - 布局(Layout)的查询和计算必须正确.
+      
+    这就意味着: 开发者可以通过该 trait 而指定自己的全局分配器.
+
+    ~System.alloc~ 和 ~System.dealloc~ 是标准库默认的分配器.
+
+    使用 ~#[global_allocator]~ 属性 就可以将静态变量 *GLOBAL* 指派的 MyAllocator
+    声明为全局分配器.
+
+    *注意*: ~#[global_allocator]~ 属性 *只能用于静态变量*.
+*** 混合代码内存安全架构三大原则
+    除了前面介绍的编码注意事项, 还有来自社区的指导 Safe 和 Unsafe Rust 代码混合
+    编程中保证内存安全的三大原则:
+
+    - 不安全的组件不应该削弱其安全性, 特别是公共的 API 和数据结构
+    - 不安全的组件应该尽可能小, 并与安全组件分离(隔离和模块化)
+    - 不安全的组件应该明确标记并轻松升级

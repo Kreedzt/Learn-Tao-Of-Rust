@@ -328,6 +328,17 @@ use std::ptr::{null, NonNull};
 //     }
 // }
 
+
+// 13-46 自定义全局分配器示例
+struct MyAllocator;
+unsafe impl GlobalAlloc for MyAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 { System.alloc(layout) }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { System.dealloc(ptr, layout) }
+}
+
+#[global_allocator]
+static GLOBAL: MyAllocator = MyAllocator;
+
 fn main() {
     // 13-11 创建空指针并判断是否为空指针
     // let p: *const u8 = std::ptr::null();
@@ -492,22 +503,28 @@ fn main() {
 
 
     // 13-42 空指针优化展示
-    println!("*mut u64: {} bytes", mem::size_of::<*mut u64>()); // 8
-    println!(
-        "NonNull<*mut u64>: {} bytes",
-        mem::size_of::<NonNull<&mut u64>>()
-    ); // 8
-    println!(
-        "Option<*mut u64>: {} bytes",
-        mem::size_of::<Option<*mut u64>>()
-    ); // 16
-    println!(
-        "Option<NonNull<*mut u64>>: {} bytes",
-        mem::size_of::<Option<NonNull<*mut u64>>>()
-    ); // 8
-    println!("Option<Foo>: {} bytes", mem::size_of::<Option<Foo>>()); // 24
-    println!(
-        "Option<FooUsingNonNull>: {} bytes",
-        mem::size_of::<Option<FooUsingNonNull>>()
-    ); // 16
+    // println!("*mut u64: {} bytes", mem::size_of::<*mut u64>()); // 8
+    // println!(
+    //     "NonNull<*mut u64>: {} bytes",
+    //     mem::size_of::<NonNull<&mut u64>>()
+    // ); // 8
+    // println!(
+    //     "Option<*mut u64>: {} bytes",
+    //     mem::size_of::<Option<*mut u64>>()
+    // ); // 16
+    // println!(
+    //     "Option<NonNull<*mut u64>>: {} bytes",
+    //     mem::size_of::<Option<NonNull<*mut u64>>>()
+    // ); // 8
+    // println!("Option<Foo>: {} bytes", mem::size_of::<Option<Foo>>()); // 24
+    // println!(
+    //     "Option<FooUsingNonNull>: {} bytes",
+    //     mem::size_of::<Option<FooUsingNonNull>>()
+    // ); // 16
+
+
+    // 13-46
+    // 此处 Vec 的内存会由 GLOBAL 全局分配器来分配
+    let mut v = Vec::new();
+    v.push(1);
 }
