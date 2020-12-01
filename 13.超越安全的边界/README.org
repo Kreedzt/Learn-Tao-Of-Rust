@@ -368,3 +368,171 @@
     ~std::mem::transmute<T, U>>(ptr)~ 方法可以将类型 ~T~ 转为类型 ~U~.
 
     从原生指针得到引用的时候, 需要避免未定义行为的发生.
+
+*** Drop 检查
+    Drop 检查(dropck)是借用检查器的附属程序, 它是为了让析构函数可以更安全合理地
+    被调用而存在.
+
+    一般来说, 析构函数的调用顺序与变量的声明顺序相反. 也就是说, 如果存在明确的声
+    明顺序, 则编译器可以推断析构函数的调用顺序. 但是对于同时声明的情况, eg: 声明
+    一个元组是2, 其内部元素的生命周期是相同的, 编译器无法推断到底该先调用谁的析
+    构函数. 当出现这种情况的时候, 就容易产生悬垂指针.
+
+**** 在 Safe Rust 中由 dropck 引起的问题 [Rust 1.50 Nightly 中尚未存在此问题]
+     在 Safe Rust 中出现这种情况时, Rust 编译器会报错.(现有 NLL 存在, 不会报错)
+
+**** _#[may_dangle] 属性与 dropck
+     [Rust 1.50 Nightly 中尚未存在此问题]
+     尝试在 13-23 代码基础上新增一个自定义的结构体 ~MyBox<T>~, 该结构体利用原生
+     指针来替代 ~Box<T>~. 这需要手动在堆上分配内存, 所以需要在 Nightly Rust 版本
+     之下使用 ~#![feature(allocator_api)]~ 特性.
+
+     使用 ~System.alloc()~ 方法分配堆内存时, 参数 ~Layout::array::<T>(1)~ 按照
+     ~T~ 类型来指定布局. 在分配好内存之后, 再通过得到的指针写入数据. 最后将指针
+     存入 ~MyBox<T>~ 结构体实例中.
+
+     ~#[may_dangle]~ 表示可能出现悬垂指针的意思. ~<#[may_dangle] T>~ 代表在
+     ~drop()~ 方法实现中, 将不会用到 ~T~, 否则可能出现悬垂指针. 因为这是需要开发
+     人员去保证的, 所以要用 unsafe 关键字来标记 impl.
+
+     *交换声明顺序后出现问题*: 产生了悬垂指针
+     
+**** 使用 PhantomData<T> 得到更严格的 drop 检查
+     因为 ~MyBox<T>~ 用了原生指针, 而原生指针没有所有权语义. 也就是说, Rust 编译
+     器 *不会认为* ~MyBox<T>~ 拥有 ~T~. 这就意味着: 在进行 drop 检查时, 不会严
+     格要求 ~T~ 的生命周期必须长于 ~MyBox<T>~. 所以在 ~MyBox<T>~ 的 ~drop()~ 方
+     法中使用 ~T~ 的时候, 编译器完全忽视了 ~T~ 很可能被提前释放的可能.
+     ~PhantomData<T>~ 的功能之一就是标记拥有关系, 正好可以解决这个问题.
+
+     在 13-29 基础上, 再重新创建 ~MyBox2<T>~ 结构体.
+
+     所以在处理 *drop 检查* 的时候, 可以通过以下 2 个维度来处理代码避免出现未定
+     义行为:
+     
+     - ~#[may_dangle]~ 属性: 该属性使用 unsafe 对 ~impl Drop~ 进行标记, 以此来警
+       示开发者不要在析构函数中使用其拥有的数据
+     - ~PhantomData<T>~: 用于标记符合类型拥有其包含的数据. 这意味着: 该符合类型
+       将会遵循严格的 drop 检查, 包含数据的生命周期必须长于复合类型的生命周期.
+
+**** 来自标准库的用法
+     在 Rust 标准库中经常结合两者使用. 
+
+     #+begin_src rust
+       #[stable(feature = "rust1", since = "1.0.0")]
+       #[cfg_attr(not(test), rustc_diagnostic_item = "vec_type")]
+       pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: AllocRef = Global> {
+           // 通过 `RawVec` 间接拥有 T
+           buf: RawVec<T, A>,
+           len: usize,
+       }
+
+       #[allow(missing_debug_implementations)]
+       pub struct RawVec<T, A: AllocRef = Global> {
+           // 靠 `Unique` 间接拥有 T
+           ptr: Unique<T>,
+           cap: usize,
+           alloc: A,
+       }
+
+       #[unstable(
+           feature = "ptr_internals",
+           issue = "none",
+           reason = "use `NonNull` instead and consider `PhantomData<T>` \
+                     (if you also use `#[may_dangle]`), `Send`, and/or `Sync`"
+       )]
+       #[doc(hidden)]
+       #[repr(transparent)]
+       #[rustc_layout_scalar_valid_range_start(1)]
+       pub struct Unique<T: ?Sized> {
+           pointer: *const T,
+           // NOTE: this marker has no consequences for variance, but is necessary
+           // for dropck to understand that we logically own a `T`.
+           //
+           // For details, see:
+           // https://github.com/rust-lang/rfcs/blob/master/text/0769-sound-generic-drop.md#phantom-data
+           // 使用 `PhantomData<T>` 保证拥有关系
+           _marker: PhantomData<T>,
+       }
+
+       // 警示开发者注意不要去使用拥有的数据
+       #[stable(feature = "rust1", since = "1.0.0")]
+       unsafe impl<#[may_dangle] T, A: AllocRef> Drop for Vec<T, A> {
+           fn drop(&mut self) {
+               unsafe {
+                   // use drop for [T]
+                   // use a raw slice to refer to the elements of the vector as weakest necessary type;
+                   // could avoid questions of validity in certain cases
+                   ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.as_mut_ptr(), self.len))
+               }
+               // RawVec handles deallocation
+           }
+       }
+     #+end_src
+
+     
+**** 使用 std::mem::forget 组织析构函数调用
+     Rust 中的析构函数默认是会被调用的, 但在有些场合不希望调用析构函数. eg: 通过
+     FFI 和 C 语言交互, 在 Rust 中创建的数据需要在 C 中被调用, 若在 Rust 中被释
+     放, 则 C 中调用的时候回出问题. ~std::mem::forget~ 来处理这种情况
+
+     对于结构体内的转移所有权, 在不实现 Drop 的 trait 情况下是合法的操作.
+
+     ~mem::uninitialized()~ 是一个 unsafe 函数, 在 take 方法中, 将 a 和 b 的值都
+     通过该函数修改为 "*伪装的初始化值*", *用于跳过 Rust 的内存初始化检查*. 但这
+     样做是危险的, 如果此时对 a 和 b 进行读取或写入, 都会 *引起未定义行为*. 该函
+     数一般用于 FFI 和 C 语言交互.
+
+     另外, ~mem::forgot()~ 函数会将当前的实例 "忘掉", 这样实例就不会被释放, 析构
+     函数也不会被调用. 但 ~forget()~ 函数不是 unsafe 函数, 因为使用该函数引起的
+     后果是 *内存泄露*, 对 Rust 来说, *属于安全范畴*. 而对开发者来说, *需要在适
+     合的地方手动调用 ~drop()~ 方法来允许析构函数*.
+
+**** 在析构函数中手动指定析构顺序
+     在 ~std::mem~ 模块中还提供了一个联合体 ~ManuallyDrop~, 通过它可以实现在析构
+     函数中手动指定析构顺序.
+
+     *警告*: 源码内容有改动: 见 [[https://github.com/ZhangHanDong/tao-of-rust-codes/issues/311][issue]]
+     #+begin_src rust
+       #[stable(feature = "manually_drop", since = "1.20.0")]
+       #[lang = "manually_drop"]
+       #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+       #[repr(transparent)]
+       pub struct ManuallyDrop<T: ?Sized> {
+           value: T,
+       }
+
+       impl<T> ManuallyDrop<T> {
+           #[must_use = "if you don't need the wrapper, you can use `mem::forget` instead"]
+           #[stable(feature = "manually_drop", since = "1.20.0")]
+           #[rustc_const_stable(feature = "const_manually_drop", since = "1.36.0")]
+           #[inline(always)]
+           pub const fn new(value: T) -> ManuallyDrop<T> {
+               ManuallyDrop { value }
+           }
+       }
+
+       impl<T: ?Sized> ManuallyDrop<T> {
+           #[stable(feature = "manually_drop", since = "1.20.0")]
+           #[inline]
+           pub unsafe fn drop(slot: &mut ManuallyDrop<T>) {
+               // SAFETY: we are dropping the value pointed to by a mutable reference
+               // which is guaranteed to be valid for writes.
+               // It is up to the caller to make sure that `slot` isn't dropped again.
+               unsafe { ptr::drop_in_place(&mut slot.value) }
+           }
+       }
+     #+end_src
+
+     如上所示, 只要通过 ~ManuallyDrop::new()~ 方法创建一个实例, 就只能通过
+     ~ManuallyDrop::drop()~ 函数手动调用析构函数. 实际上, ~std::mem::forget<T>~
+     函数的实现就是用了 ~ManuallyDrop::new()~ 方法:
+     
+     ~forget<T>~ 函数源码示意:
+     #+begin_src rust
+       #[inline]
+       #[rustc_const_stable(feature = "const_forget", since = "1.46.0")]
+       #[stable(feature = "rust1", since = "1.0.0")]
+       pub const fn forget<T>(t: T) {
+           let _ = ManuallyDrop::new(t);
+       }
+     #+end_src

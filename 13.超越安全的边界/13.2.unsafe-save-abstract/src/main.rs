@@ -1,5 +1,12 @@
+#![feature(allocator_api, dropck_eyepatch)]
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::fmt;
 use std::marker::PhantomData;
+use std::mem;
 use std::mem::transmute;
+use std::mem::ManuallyDrop;
+use std::ptr;
+
 
 // 13-16 自定义内部可变类型 `MyCell<T>`
 // struct MyCell<T> {
@@ -93,7 +100,202 @@ use std::mem::transmute;
 
 
 // 13-21 从原生指针得到引用
-fn foo<'a>(input: *const u32) -> &'a u32 { unsafe { return &*input } }
+// fn foo<'a>(input: *const u32) -> &'a u32 { unsafe { return &*input } }
+
+
+// 13-23 声明元组变量测试 dropck
+// #[derive(Copy, Clone, Debug)]
+// enum State {
+//     InValid,
+//     Valid,
+// }
+
+// #[derive(Debug)]
+// struct Hello<T: fmt::Debug>(&'static str, T, State);
+
+// impl<T: fmt::Debug> Hello<T> {
+//     fn new(name: &'static str, t: T) -> Self { Hello(name, t, State::Valid) }
+// }
+
+// impl<T: fmt::Debug> Drop for Hello<T> {
+//     fn drop(&mut self) {
+//         println!("drop Hello({}, {:?}, {:?})", self.0, self.1, self.2);
+//         self.2 = State::InValid;
+//     }
+// }
+
+// struct WrapBox<T> {
+//     v: Box<T>,
+// }
+
+// impl<T> WrapBox<T> {
+//     fn new(t: T) -> Self { WrapBox { v: Box::new(t) } }
+// }
+
+// fn f1() {
+//     let (x, y);
+//     // 交换顺序报错
+//     // let (y, x);
+//     x = Hello::new("x", 13);
+//     // Rust 1.50 Nightly 下没有报错
+//     y = WrapBox::new(Hello::new("y", &x));
+// }
+
+
+// 13-26 使用原生指针的结构体
+// struct MyBox<T> {
+//     v: *const T,
+// }
+
+// impl<T> MyBox<T> {
+//     fn new(t: T) -> Self {
+//         unsafe {
+//             let p = System.alloc(Layout::array::<T>(1).unwrap());
+//             let p = p as *mut T;
+//             ptr::write(p, t);
+//             MyBox { v: p }
+//         }
+//     }
+// }
+
+// impl<T> Drop for MyBox<T> {
+//     fn drop(&mut self) {
+//         unsafe {
+//             println!("MyBox drop");
+//             let p = self.v as *mut _;
+//             System.dealloc(p, Layout::array::<T>(mem::align_of::<T>()).unwrap());
+//         }
+//     }
+// }
+
+
+// 13-28 修改 drop 方法
+// unsafe impl<#[may_dangle] T> Drop for MyBox<T> {
+//     fn drop(&mut self) {
+//         unsafe {
+//             ptr::read(self.v); // 此处新增
+//             println!("MyBox drop");
+//             let p = self.v as *mut _;
+//             System.dealloc(p, Layout::array::<T>(mem::align_of::<T>()).unwrap());
+//         }
+//     }
+// }
+
+// fn f2() {
+//     {
+//         let (x1, y1);
+//         x1 = Hello::new("x1", 13);
+//         y1 = MyBox::new(Hello::new("y1", &x1));
+//     }
+//     {
+//         // let (x2, y2);
+//         // 13-29 修改顺序: 出现问题: 产生悬垂指针
+//         let (y2, x2);
+//         x2 = Hello::new("x2", 13);
+//         y2 = MyBox::new(Hello::new("y2", &x2));
+//     }
+// }
+
+
+// 13-31 新增 `MyBox2<T>`
+// struct MyBox2<T> {
+//     v: *const T,
+//     // 表明: `Mybox2<T>` 拥有 `T`
+//     _pd: PhantomData<T>,
+// }
+
+// impl<T> MyBox2<T> {
+//     fn new(t: T) -> Self {
+//         unsafe {
+//             let p = System.alloc(Layout::array::<T>(1).unwrap());
+//             let p = p as *mut T;
+//             ptr::write(p, t);
+//             MyBox2 {
+//                 v: p,
+//                 _pd: Default::default(),
+//             }
+//         }
+//     }
+// }
+
+// unsafe impl<#[may_dangle] T> Drop for MyBox2<T> {
+//     fn drop(&mut self) {
+//         unsafe {
+//             ptr::read(self.v);
+//             let p = self.v as *mut _;
+//             System.dealloc(p, Layout::array::<T>(mem::align_of::<T>()).unwrap());
+//         }
+//     }
+// }
+
+// fn f3() {
+//     // let (y, x); // 正常触发编译报错
+//     let (x, y);
+//     // let x;
+//     // let y;
+//     x = Hello::new("x", 13);
+//     y = MyBox2::new(Hello::new("y", &x));
+// }
+
+
+// 13-33 转移结构体中字段所有权示例
+// struct A;
+// struct B;
+// struct Foo {
+//     a: A,
+//     b: B,
+// }
+
+// impl Foo {
+//     fn take(self) -> (A, B) {
+//         // 转移所有权但不实现 `drop`: 允许的操作
+//         // error[E0509]: cannot move out of type `Foo`, which implements the `Drop` trait
+//         (self.a, self.b)
+//     }
+// }
+
+// impl Drop for Foo {
+//     fn drop(&mut self) {
+//         // ..do something
+//     }
+// }
+
+// 13-36 重新为 `Foo` 实现 `take` 方法
+// impl Foo {
+//     fn take(mut self) -> (A, B) {
+//         let a = mem::replace(&mut self.a, unsafe { mem::uninitialized() });
+//         let b = mem::replace(&mut self.b, unsafe { mem::uninitialized() });
+//         mem::forget(self);
+//         (a, b)
+//     }
+// }
+
+// impl Drop for Foo {
+//     fn drop(&mut self) {
+//         // ..do something
+//     }
+// }
+
+
+// 13-37 `ManualDrop` 使用示例
+struct Peach;
+struct Banana;
+struct Melon;
+struct FruitBox {
+    peach: ManuallyDrop<Peach>,
+    melon: Melon,
+    banana: ManuallyDrop<Banana>,
+}
+
+impl Drop for FruitBox {
+    fn drop(&mut self) {
+        unsafe {
+            // 显式指定析构顺序
+            ManuallyDrop::drop(&mut self.peach);
+            ManuallyDrop::drop(&mut self.banana);
+        }
+    }
+}
 
 fn main() {
     // 13-11 创建空指针并判断是否为空指针
@@ -207,13 +409,30 @@ fn main() {
 
 
     // 13-22 使用 `transmute` 函数得到引用
-    let x: &i32;
-    {
-        let a = 12;
-        let ptr = &a as *const i32;
-        // 该函数可以将类型 `T` 转为类型 `U`
-        // 这是一个 unsafe 函数, 使用不当会产生未定义行为
-        x = unsafe { transmute::<*const i32, &i32>(ptr) };
-    } // 离开作用域后, x 依旧产生悬垂指针
-    println!("hello {}", x);
+    // let x: &i32;
+    // {
+    //     let a = 12;
+    //     let ptr = &a as *const i32;
+    //     // 该函数可以将类型 `T` 转为类型 `U`
+    //     // 这是一个 unsafe 函数, 使用不当会产生未定义行为
+    //     x = unsafe { transmute::<*const i32, &i32>(ptr) };
+    // } // 离开作用域后, x 依旧产生悬垂指针
+    // println!("hello {}", x);
+
+
+    // 13-23
+    // f1();
+
+
+    // 13-26
+    // f2();
+
+
+    // 13-31
+    // f3();
+
+
+    // 13-33 (补充)
+    let a = Foo { a: A, b: B };
+    let b = a.take();
 }
