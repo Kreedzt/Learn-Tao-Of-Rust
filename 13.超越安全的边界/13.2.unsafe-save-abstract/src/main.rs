@@ -6,7 +6,8 @@ use std::mem;
 use std::mem::transmute;
 use std::mem::ManuallyDrop;
 use std::ptr;
-
+use std::ptr::{null, NonNull};
+// use std::vec::Vec;
 
 // 13-16 自定义内部可变类型 `MyCell<T>`
 // struct MyCell<T> {
@@ -278,24 +279,54 @@ use std::ptr;
 
 
 // 13-37 `ManualDrop` 使用示例
-struct Peach;
-struct Banana;
-struct Melon;
-struct FruitBox {
-    peach: ManuallyDrop<Peach>,
-    melon: Melon,
-    banana: ManuallyDrop<Banana>,
-}
+// struct Peach;
+// struct Banana;
+// struct Melon;
+// struct FruitBox {
+//     peach: ManuallyDrop<Peach>,
+//     melon: Melon,
+//     banana: ManuallyDrop<Banana>,
+// }
 
-impl Drop for FruitBox {
-    fn drop(&mut self) {
-        unsafe {
-            // 显式指定析构顺序
-            ManuallyDrop::drop(&mut self.peach);
-            ManuallyDrop::drop(&mut self.banana);
-        }
-    }
-}
+// impl Drop for FruitBox {
+//     fn drop(&mut self) {
+//         unsafe {
+//             // 显式指定析构顺序
+//             ManuallyDrop::drop(&mut self.peach);
+//             ManuallyDrop::drop(&mut self.banana);
+//         }
+//     }
+// }
+
+
+// 13-42 空指针优化展示
+// struct Foo {
+//     a: *mut u64,
+//     b: *mut u64,
+// }
+
+// struct FooUsingNonNull {
+//     a: *mut u64,
+//     b: NonNull<*mut u64>,
+// }
+
+
+// 13-44 Unsafe Rust 中需要注意恐慌安全问题
+// error[E0116]: cannot define inherent `impl` for a type outside of the crate where the type is defined
+// impl<T: Clone> Vec<T> {
+//     fn push_all(&mut self, to_push: &[T]) {
+//         self.reserve(to_push.len());
+
+//         unsafe {
+//             self.set_len(self.len() + to_push.len());
+
+//             for (i, x) in to_push.iter().enumerate() {
+//                 // `clone()` 方法存在恐慌的可能. 所以整个函数就不是恐慌的安全函数, 它也不保证内存安全
+//                 self.ptr().offset(i as isize).write(x.clone());
+//             }
+//         }
+//     }
+// }
 
 fn main() {
     // 13-11 创建空指针并判断是否为空指针
@@ -433,6 +464,50 @@ fn main() {
 
 
     // 13-33 (补充)
-    let a = Foo { a: A, b: B };
-    let b = a.take();
+    // let a = Foo { a: A, b: B };
+    // let b = a.take();
+
+
+    // 13-41 `NonNull<T>` 内置方法示例
+    // 创建悬垂指针
+    // let ptr: NonNull<i32> = NonNull::dangling();
+    // println!("{:p}", ptr); // 0x4
+
+    // let mut v = 42;
+    // // 将可变的原生指针生成 `Option<NonNull<i32>>` 类型
+    // let ptr: Option<NonNull<i32>> = NonNull::new(&mut v);
+    // println!("{:?}", ptr); // Some(0x7ffee085d834)
+    // // `*mut T` 指针
+    // println!("{:?}", ptr.unwrap().as_ptr()); // 0x7ffee085d834
+    // // `&mut T` 引用
+    // // 注意: 此处的 `as_mut()~ 方法得到的引用是有正常生命周期的引用, 而非未绑定生命周期的引用
+    // println!("{}", unsafe { ptr.unwrap().as_mut() }); // 42
+
+    // let mut v = 42;
+    // let ptr = NonNull::from(&mut v);
+    // println!("{:?}", ptr); // 0x7ffee085d934
+    // let null_p: *const i32 = null();
+    // let ptr = NonNull::new(null_p as *mut i32);
+    // println!("{:?}", ptr); // None
+
+
+    // 13-42 空指针优化展示
+    println!("*mut u64: {} bytes", mem::size_of::<*mut u64>()); // 8
+    println!(
+        "NonNull<*mut u64>: {} bytes",
+        mem::size_of::<NonNull<&mut u64>>()
+    ); // 8
+    println!(
+        "Option<*mut u64>: {} bytes",
+        mem::size_of::<Option<*mut u64>>()
+    ); // 16
+    println!(
+        "Option<NonNull<*mut u64>>: {} bytes",
+        mem::size_of::<Option<NonNull<*mut u64>>>()
+    ); // 8
+    println!("Option<Foo>: {} bytes", mem::size_of::<Option<Foo>>()); // 24
+    println!(
+        "Option<FooUsingNonNull>: {} bytes",
+        mem::size_of::<Option<FooUsingNonNull>>()
+    ); // 16
 }

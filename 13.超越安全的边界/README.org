@@ -536,3 +536,64 @@
            let _ = ManuallyDrop::new(t);
        }
      #+end_src
+
+*** NonNull<T> 指针
+    ~NonNull<T>~ 指针实际上是一种特殊的 ~*mut T~ 原生指针, 它的特殊之处有 2 点:
+    *协变(covariant)* 和 *非零(non-zero)*.
+
+    ~NonNull<T>~ 旨在成为 *Unsafe Rust 默认的原生指针*, 而非 ~*const T~ 和 ~*mut
+    T~. 因为 ~*const T~ 和 ~*mut T~ 基本上是等价的, 它们可以相互转换. 但 *不能从
+    ~*const T~ 直接得到 ~&mut T~.*
+    
+    在 NonNull 被引入之前, Unsafe 代码中最常见的模式就是使用 ~*const T~, 结合
+    ~PhantomData<T>~ 得到协变结构体, 并且在需要的时候会将 ~*const T~ 转换为
+    ~*mut T~. 使用 ~NonNull<T>~ 就不需要进行转换了, 因为 *它本身就等价于一个协变
+    版本的 ~*mut T~.*, 但是还需要 ~PhantomData<T>~ 在必要时提供 *不变* 或 *加强
+    drop 检查*.
+
+**** NonNull<T> 的本质
+     *警告*: 源码有改动
+     ~NonNull<T>~ 源码示意:
+     #+begin_src rust
+       #[stable(feature = "nonnull", since = "1.25.0")]
+       #[repr(transparent)]
+       #[rustc_layout_scalar_valid_range_start(1)]
+       #[rustc_nonnull_optimization_guaranteed]
+       pub struct NonNull<T: ?Sized> {
+           pointer: *const T,
+       }
+     #+end_src
+
+     ~NonNull::dangling()~ 函数用来创建新的悬垂指针, 但它的内存是对齐的. 它在一
+     些场景里用于类型初始化. eg: 使用 ~Vec::new()~ 创建一个空的动态数组, 需要初
+     始化一个指针. 它是安全的.
+
+**** 空指针优化
+     因为 NonNull 的 *非零特性*, 所以可以 *帮助编译器进行优化*.
+
+     Rust 对包含了 ~NonNull<T>~ 指针的 ~Option<T>~ 类型进行了优化行为, 这种优化
+     叫做 "空指针优化". 因为 ~NonNull<T>~ 因为是不可能为空的, 所以 ~Option<T>~
+     本身是不可能为空的, 所以 ~Option<T>~ 就不需要多余的判别式(tag)来判断是不是
+     None, 这样在内存布局上就不需要占用多余的内存. 而对 ~*mut T~ 指针来说, 无法
+     保证它一定不是空指针, 所以 ~Option<*mut u64>~ 还需要保留判别式, 内存布局还
+     需要按正常的枚举体来进行对齐, 所以会多占用一倍内存.
+
+     空指针优化固然可以省内存, 但在使用 FFI 和 C 语言 "打交道" 的时候要慎用.
+
+**** Unsafe 与恐慌安全
+     在 Unsafe Rust 中就需要小心恐慌安全, 这里是 Rust 编译器鞭长莫及的地方.
+
+     代码 13-44 中, 整个函数唯一有可能发生恐慌的地方就是 *clone* 方法, 因为其他
+     方法都是简单的函数, 并不会发生恐慌, *但是 ~clone()~ 方法 的实现是未知的, 存
+     在发生恐慌的可能*. 所以整个 ~push_all()~ 函数就不是恐慌安全的函数, 它也不保
+     证内存安全. 若 ~clone()~ 方法发生了恐慌, 那么后续的元素将无法继续写入内存,
+     但是之前已经使用 ~reserve()~ 预分配了内存, 并通过 ~set_len()~ 方法为数组设
+     置了长度, 若后继的元素无法写入内存, 那么就会出现未初始化的内存, 最终导致内
+     存不安全. 但是出于 Rust 的设计, 这些未初始化的内存并不会被暴露出来. 所以,
+     总的来说, 相比于其他语言, eg: C++, Rust 程序员几乎不会担心恐慌安全的问题.
+
+     Rust 也提供了 ~catch_unwind()~ 方法来让开发者捕获恐慌, 恢复当前线程. 但是,
+     对于 13-44 中的非恐慌安全的 ~push_all()~ 函数来说, 若想捕获 ~clone()~ 方法
+     可能引发的恐慌, 则需小心. 数组的长度已经确定, 但是还有未初始化的内存, 整改
+     数据结构的不变性被破坏了. 所以 Rust 编译器也不会允许开发者在 ~push_all()~
+     函数中使用 ~catch_unwind()~.
