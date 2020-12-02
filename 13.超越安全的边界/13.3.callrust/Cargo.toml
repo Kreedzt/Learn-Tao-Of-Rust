@@ -1,0 +1,15 @@
+[package]
+name = "callrust"
+version = "0.1.0"
+authors = ["Kreedzt <zhaozisong1@live.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.80"
+
+[lib]
+name="callrust"
+# 两种动态链接库, 分别代表兼容 C-ABI 的静态库和动态库
+crate-type = ["staticlib", "cdylib"]
