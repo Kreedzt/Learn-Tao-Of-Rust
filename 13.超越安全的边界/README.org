@@ -641,3 +641,192 @@
     - 不安全的组件不应该削弱其安全性, 特别是公共的 API 和数据结构
     - 不安全的组件应该尽可能小, 并与安全组件分离(隔离和模块化)
     - 不安全的组件应该明确标记并轻松升级
+
+** 和其他语言交互
+   Common Lisp 语言规范中首次提出了术语 "*外部函数接口(Foreign Function
+   Interface, FFI)*", 用于规范语言间调用的语言特征. 后来, 该属于也逐渐被引入到
+   Haskell 和 Python 等大多数语言中. 也有个别语言使用其他属于, eg: Ada 语言使用
+   "*语言绑定(Language Bindings)*", Java 语言则将 FFI 称为 *JNI(Java Native
+   Interface)*.
+   
+   所以, 现在编程语言之间都是通过 FFI 技术来进行交互的.
+
+*** 外部函数接口
+    FFI 技术的主要功能就是将一种编程语言的 *语义* 和 *调用约定* 与另一种编程语言
+    的语义和调用约定 *相匹配*.
+
+    不管哪种语言, 无论是编译执行还是解释执行, 最终都会到达处理器指令这个环节. 在
+    这个环节所处的层面上, 编程语言之间的语法、数据类型等语义差异均以消除, 只需要
+    匹配调用约定, 这就给编程语言之间的相互调用带来了可能
+
+**** 应用程序二进制接口
+     调用约定如何匹配, 与 *应用程序二进制接口(ABI)* 高度相关
+     
+     ABI 是一个规范, 主要涵盖以下内容:
+     - *调用约定*: 一个函数的调用过程本质就是参数、函数、返回值如何传递. 编译器
+       按照调用规则去编译, 把数据放到相应的堆栈中, 函数的调用方和被调用方(函数本
+       身)都需要遵循这个统一的约定
+     - *内存布局*: 规定了大小和对齐方式
+     - *处理器指令集*: 不同平台的处理器指令集不同
+     - *目标文件和库的二进制格式*
+
+     ABI 规范由编译器、操作平台、硬件产商等共同制定. ABI 是 *二进制层面程序兼容
+     的契约, 只要拥有相同的 ABI, 来自不同编译器之间的库才可以相互链接和调用*, 否
+     则将无法链接, 或者即使可以链接, 也无法正确运行.
+
+     不同的体系结构、操作系统、编程语言、每种编程语言的不同编译器实现基本都有自
+     己规定或者遵循的 ABI 和调用规范. 目前只能通过 FFI 技术遵循 C 语言 ABI 才可
+     以做到编程语言的相互调用. 也就是说, C 语言 ABI 是唯一通用的稳定的标准 ABI.
+     这是由历史原因决定的, C 语言伴随着操作系统一路发展而来, 导致其成为事实上的
+     "标准 ABI".
+
+     Rust 语言也提供了 ABI, 但因为 Rust 语言目前处于上升期, 语言还在不断地完善和
+     改进, 导致 ABI 还不能够稳定下来, 在不久的将来, Rust ABI 应该是可以稳定的.
+     Rust 提供了 FFI 技术, 允许开发者通过稳定的 C-ABI 和其他语言进行交互.
+
+     相关不稳定讨论: [[https://people.gnome.org/~federico/blog/rust-stable-abi.html][gnome]], [[https://news.ycombinator.com/item?id=24140848][HackerNews]]
+     
+     在 Rust 中使用 FFI 只需要通过 *extern 关键字* 和 *extern 块* 对 FFI 接口进
+     行标注即可. 在编译时会由 LLVM 默认生成 C-ABI.
+
+**** 链接与 Crate Type
+     有了统一的 ABI 之后, 还需要经过 *链接* 才能实现最终的相互调用.
+
+     链接是将编译单元产生的目标文件按照特定的约定组合在一起, 最终生成可执行文件、
+     静态库或动态库. 链接产生于程序开发的模块化. 这里的模块是指编译层面的模块.
+     eg: C/C++ 语言中每个文件都是一个编译单元, 所以也可以说是一个编译模块, 编译
+     之后就能产生一个目标文件. Rust 和 C/C++ 不同, 它以包(crate)为编译单元. 在一
+     个 Rust 包中通过 extern crate 声明来引入其他包之后, 编译器支持各种方法可以
+     将包链接在一起, 生成指定的可执行文件、动态库或静态库.
+
+     在一个编译模块中, 通过包含了函数和全局数据的定义. 函数和数据由符号来标识,
+     一般有全局和静态之分. 全局符号可以在模块间禁用, 而静态符号只能在当前模块引
+     用. 编译各个模块的时候, 编译器的一项重要工作就是建立 *符号表*. 符号表中包含
+     了模块的哪些符号是全局符号, 哪些是静态符号, 每个符号都会关联一个地址. 在链
+     接过程汇总, 链接器会扫描各个编译模块的符号表, 建立全局符号表, 由此决定, 符
+     号在哪里被定义, 以及在哪里被调用. 这个过程叫做 *符号解析*. 除此之外, 因为可
+     执行文件和库的内存地址空间使用的差异, 还需要进行存储空间的分配. 地址重新分
+     配之后, 相应符号的引用也需要重新被跳转, 这个过程叫做 *重定位*. 经过符号解析、
+     存储空间分配和重定位之后, 链接过程就完成了, 最终生成可执行文件或库.
+
+     从概念上看, 库可以分为 2 种: *静态库* 和 *动态库*.
+     
+     *静态库* 是这样一种库: 在功能上, 可以在链接时将引用的代码和数据复制到引用该
+     库的程序中; 在格式上, 它只是普通目标文件的集合, 只是一种简单的拼接. 静态库
+     使用简单, 原理上容易理解, 但是它容易浪费空间. *动态库* 和静态库差异比较大.
+     动态库可以把链接这个过程延迟到运行时进行, eg: 重定位发生在运行时而非编译时.
+     动态库相对来说比较省空间.
+
+     除可执行文件外, Rust 一共支持 4 种库:
+     
+     | crate_type | Rust  | 其他语言  |
+     |------------+-------+-----------|
+     | 动态库     | dylib | cdylib    |
+     | 静态库     | rlib  | staticlib |
+
+     可以通过命令行参数 *Flag* 或者 *crate_type* 属性指定生成的库类型:
+
+     - ~--crate-type=bin~ 或 ~#[crate_type="bin"]~: 表示将生产一个可执行文件. 要
+       求程序中必须包含一个 main 函数.
+
+     - ~--crate-type=rlib~ 或 ~#[crate_type="rlib"]~: 可以理解为静态 Rust 库, 由
+       Rust 编译器来使用
+
+     - ~--crate-type=dylib~ 或 ~#[crate_type="dylib"]~: 可以理解为动态 Rust 库,
+       同样由 Rust 编译器来使用. 该类型在 Linux 上会创建 ~*.so~ 文件, 在 MacOSX
+       上会创建 ~*.dylib~ 文件, 在 Windows 上会创建 ~*.dll~ 文件.
+
+     - ~--crate-type=staticlib~ 或 ~#[crate_type="staticlib"]~: 将生产静态系统库.
+       Rust 编译器永远不会链接该库, 主要用于和 C 语言进行连接, 达成和其他语言交
+       互的目的. 静态系统库在 Linux 和 MacOSX 上会创建 ~*.a~ 文件, 在 Windows 上
+       会创建 ~*.lib~ 文件.
+
+     - ~--crate-type=cdylib~ 或 ~#[crate_type="cdylib"]~: 将生产动态系统库. 同样
+       用于生成 C 接口, 和其他语言交互. 该类型在 Linux 上会创建 ~*.so~ 文件, 在
+       MacOSX 上会场景 ~*.dylib~ 文件, 在 Windows 上会创建 ~*.dll~ 文件.
+
+     *注意*: *crate_type 可以指定多个*. 有时候会有以下情况: 包 A 依赖包 B, 包 B
+     需要生成一个 staticlib 静态系统库. 这时, 就需要为包 B 同时指定 staticlib 和
+     rlib 两种包类型.
+
+     只要 ABI 统一, 两个库就可以相互链接. 链接之后, 就可以实现相互调用. 所以,
+     Rust 要和其他语言交互, 可以通过导出为 C-ABI 接口的静态库或动态库, 然后其他
+     语言链接该库, 就可以实现语言之间的相互调用.
+
+**** 交叉编译
+     以上说的是本地编译的情况, Rust 也支持 *交叉编译*, 几乎做到了开箱即用. 在本
+     地平台上编译出需要放在其他平台运行的程序, 就叫交叉编译.
+
+     #+begin_src sh
+       rustc --target=arm-unknown-linux-gnueabihf hello.rs
+     #+end_src
+     
+     输入后即可工作. 若是针对 ARM 嵌入式开发平台, 不能使用 std 标准库(因为 std
+     不支持 ARM 单片机).
+
+     #+begin_src rust
+       #![crate_type="lib"]
+       #![no_std]
+       fn main() {
+           println!("Hello, world!");
+       }
+     #+end_src
+
+     嵌入式推荐的做法是使用 *core*.
+
+     也可以使用 Cargo 进行交叉编译. 给 ~cargo build~ 命令传递 ~--target~ 参数即
+     可. 默认情况下, cargo 命令会使用 cc 作为交叉编译器的链接器. 也可以通过修改
+     Cargo 的配置文件来指定链接器.
+
+     使用 cargo 进行交叉编译示意
+     #+begin_src sh
+       # 通过配置文件指定链接器
+       cat ~/.cargo/config
+       [target.arm-unknown-linux-gnuabihf]
+       linker = "arm-linux-gnueabihf-gcc-4.8"
+       # 使用 cargo 交叉编译
+       cargo new --bin hello
+       cd hello
+       cargo build --target=arm-unknown-linux-gnueabihf
+     #+end_src
+
+     以上示例中, target 参数后面的格式称为 *target triple* 格式. Triple 格式是交
+     叉编译前必须要确认好的, 格式含义如下:
+     
+     详见: [[https://doc.rust-lang.org/nightly/rustc/platform-support.html][platform-support]]
+
+     #+begin_example
+       {arch}-{vendor}-{sys}-{abi}
+     #+end_example
+
+     - arch: 代表编译程序的主机系统, 若是嵌入式, 就是 arm
+     - vendor: 供应商, 若是位置, 就可以指定为 unknow
+     - sys: 系统, eg: Linux
+     - abi: ABI 接口, eg: gnueabihf 表示的是系统使用 glibc 作为 C 标准库(libc)的
+       实现, 并具有硬件加速浮点运算(FPU)功能. 有时候也可以省略最后的 abi, eg2:
+       x86_64-apple-darwin, wasm32-unknown-unknown 等.
+       
+     Rust 社区还提供了第三方交叉编译工具 *xargo*, 使用该工具可以更方便地进行交叉
+     编译, 还允许开发者构建一个定制的 std 库. 当前, Rust 官方着手进行 xargo 和
+     rustup 工具的整合.
+
+**** extern 语法
+     Rust 提供了 extern 语法使得 FFI 非常便于使用
+
+     - *extern 关键字*: 通过 extern 关键字声明的函数, 可以在 Rust 和 C 语言中自
+       由使用
+     - *extern 块*: 如果在 Rust 中调用 C 代码, 则可以使用 extern 块, 将外部的 C
+       函数进行逐个标记, 以供 Rust 内部调用.
+
+     编译器会根据 extern 语法自动在 Rust-ABI 和 C-ABI 之间切换. 有 3 个 extern
+     ABI 字符串是跨平台的:
+     - ~extern "Rust"~: 默认的 ABI, 任何普通的 fn 函数都将使用该 ABI
+     - ~extern "C"~: 这是指定使用 C-ABI, 等价于 ~extern fn foo()~ 这样的函数声明
+     - ~extern "system"~: 这和 ~extern "C"~ 是相似的, 只是在 Win32 平台上等价于
+       ~stdcall~.
+
+     除此之外, Rust 还支持其他 extern ABI 字符串, 详情可以参见官方 [[https://doc.rust-lang.org/reference/items/external-blocks.html][Reference]] 页
+     面. 另外还有三个 Rust 编译器专用的 ABI 字符串:
+     - ~extern "rust-intrinsic"~: 代表 Rust 编译器内部函数的 ABI
+     - ~extern "rust-call"~: ~Fn::call~ 的 ABI
+     - ~extern "platform-intrinsic"~: 特定平台内在函数的 ABI     
