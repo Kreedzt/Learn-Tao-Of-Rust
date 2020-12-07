@@ -941,3 +941,52 @@
     调用. 该 libffi 库是动态语言虚拟机和二进制的一道桥梁.
 
     TODO...
+
+** Rust 与 WebAssembly
+   *WebAssembly* 是近两年兴起的一种 *新的字节码格式*, 它的缩写是 "WASM". 这种格
+   式背后的意义在于, 在某种程度上, 它将改变整个 web 的生态. 所以, Rust 2018 的重
+   点发展目标之一就是简历针对便于开发 WebAssembly 的生态工具.
+
+   WebAssembly 项目是 Google、MicroSoft、Mozilla 等多家公司联合发起的一个面向
+   Web 的通用二进制和文本格式项目. 它的出现并不是为了让开发者手写代码, 而是作为
+   C/C++/Rust 语言的一种编译目标, 这样就产生了一个巨大的意义: *在客户端提供了一
+   种接近本地允许速度的多种语言编写代码的方式*. 在某种意义上, WebAssembly 相当于
+   一种 *中间语言(IR)*. 其实 WebAssembly 的名词也由此而来, 就像汇编语言那样是所
+   有语言转换成机器码的通用底层语言, WebAssembly 就是面向 Web 的汇编.
+
+   目前 WebAssembly 的重要应用领域是浏览器中配合 JavaScript API 提升前端应用的性
+   能, 虽然 JavaScript 目前有很多优化的手段, 效果也不错, 但是它的计算性能还是很
+   慢, 对于一些计算密集型场景, 就可以使用 WebAssembly 来替代. eg: 游戏的渲染引擎、
+   物理引擎, 图像音频/视频的处理和编辑、加密算法等.
+
+   WebAssembly 比 JavaScript 更快地原因主要体现在以下几个方面:
+
+   - WebAssembly 体积更小, 下载和解析更快. WebAssembly 的二进制格式就是为了更适
+     合解析而设计, 其解析速度要比 JavaScript 快一个数量级
+   - WebAssembly 不受 JavaScript 的约束, 可以利用更多的 CPU 特性. eg: 64 位整数、
+     内存读写偏移量、非内存对齐读写和多种 CPU 指令等
+   - 生成 WebAssembly 编译器工具链的优化和改进. eg: 在 Rust 中, 可以使用 wasm-gc
+     工具来优化生成的 wasm 文件的大小
+   - WebAssembly 不需要垃圾回收. 内存操作是手动控制, 但也没必要担心内存泄露的问
+     题, 因为 WebAssembly 使用的整个内存空间是由 JavaScript 分配的, 它实际上是一
+     个 JavaScript 对象, 最终会由 JavaScript 的 GC 去管理
+
+
+   *警告*: 内容有改动
+   同时, WebAssembly 还在不断地朝着执行效率更高的方向发展. 目前 WebAssembly 还不
+   支持 DOM 操作, 但是已经有了解决方案, 就是依赖 [[https://github.com/WebAssembly/reference-types/blob/master/proposals/reference-types/Overview.md][Reference Types]] 和 Host
+   Bindings[疑似废弃] 技术在 WebAssembly 中直接操作 JavaScript + DOM 对象和调用
+   其方法.
+
+   *WebAssembly* 名称虽然包含了 Web, 但其发展至今, *已经不仅仅局限于 Web*. 为了
+   将 WebAssembly 嵌入到不同的环境中, 其 *规范* 是被拆分到了独立的文档中, 并区分
+   了层级:
+
+   - *核心层*: 定义 WebAssembly 模块及其指令集的语义
+   - *API 层*: 定义应用程序接口, 目前指定了 2 个 API: JavaScript API 和 Web API.
+
+   由此可看出, WebAssembly *是独立于 Web 的规范, Web 只是其应用的特定环境*. 事实
+   上, WebAssembly 还应用于除 Web 之外的其他领域: 桌面图形化程序、区块链智能合约
+   和编写操作系统内核.
+
+   随着该技术的发展, 将会应用到更多领域.
