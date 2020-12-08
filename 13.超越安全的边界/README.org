@@ -990,3 +990,178 @@
    和编写操作系统内核.
 
    随着该技术的发展, 将会应用到更多领域.
+
+*** WebAssembly 要点介绍
+    为了理解 WebAssembly 的工作机制, 需要了解如下关键概念:
+    - *模块*: 模块是 WebAssembly 的基本编译单位, 一个 .wasm 文件就是一个模块. 其
+      中定义了各种函数, 可以被 JavaScript 加载调用.
+    - *线性内存*: 用于和 JavaScript 通信, 是一个可变大小的 ArrayBuffer, 由
+      JavaScript 分配. WebAssembly 提供了对其进行操作的指令.
+    - *表格*: 用于存放函数应用, 支持动态调用函数
+    - *实例*: 一个模块的实例包括其在运行时使用的所有状态, eg: 内存、表格和一系列
+      的值. 同一个模块的多个实例可以共享相同的内存和表格
+    - *栈式机器*: WebAssembly 指令的运行是基于栈式机器定义的, 每种类型的指令都是
+      在栈上进行出栈和入栈操作
+
+**** 文本格式 wast
+     WebAssembly 模块提供 2 种格式: *二进制* 和 *文本格式*. 其中文本格式是基于
+     *S 表达式*, 供人类读写, 所以也称为 *wast*. 文本格式和二进制格式也可以通过工
+     具相互转换.
+
+     #+begin_src wat
+        (module
+          (func $add (param $lhs i32) (param $rhs i32) (result i32)
+            get_local $lhs
+            get_local $rhs
+            i32.add)
+          (export "add" (func $add))
+        )
+     #+end_src
+
+     每一对括号都代表一个 *节点*. 括号内第一个元素是代表节点的类型, 后面由空格分
+     隔的是数学或子节点列表. 以上代码一共可以分成三大节点: *module*, *func* 和
+     *export*. 其中, module 表示模块, func 代表函数, export 是指将模块内定义的函
+     数导出.
+
+     函数签名 ~$add~ 中, ~$~ 符开头可以为参数、函数名或局部变量等起名. 除了导出/
+     导出的指令, 模块中几乎所有的代码都被划分到函数中. 由 func 定义的函数签名中
+     包含的头两个 param 节点是表示函数的参数, 均为 i32 类型. 最后一个 result 节
+     点代表函数的返回值为 i32 类型.
+
+     函数体中, ~get_local~ 指令是用于获取参数的值, 最后调用 ~i32.add~ 操作, 表示
+     将 2 个 i32 类型的参数进行相加, 该操作是 WebAssembly 内置的运算符([[https://webassembly.github.io/spec/core/exec/index.html][更多文档]]).
+     wasm 文件执行是以 *栈式机器* 定义的, *get_local* 指令会将它读到的参数值压到
+     栈上, 然后 ~i32.add~ 从栈上取出两个 i32 类型的值进行求和, 将计算结果压到栈
+     顶.
+
+     export 节点是一个导出声明. 在 export 指令后面的 "add" 是指定给 JavaScript
+     用的函数名.
+
+     文本格式的 WebAssembly 代码构建为 wasm 后, 使用如下代码导入:
+     #+begin_src js
+       // 1. 导入文件
+       fetch('../out/main.wasm').then(response =>
+         // 通过 arrayBuffer 获取
+         response.arrayBuffer()
+         // 2. 编译并实例化
+       ).then(bytes => WebAssembly.instantiate(bytes)).then(results => {
+         instance = results.instance;
+         // 3. 使用导出方法
+         document.getElementById("container").textContent = instance.exports.add(1,1);
+       }).catch(console.error);
+     #+end_src
+
+**** 使用 WebAssembly 内存和 JavaScript 交互
+     因为 WebAssembly 当前只支持 i32、i64、f32 和 f64 这四种可用的基本类型, 所以,
+     为了处理字符串以及其他复杂的类型, WebAssembly 提供了内存. WebAssembly 的
+     *内存实际上一种可增长的线性字节数组*, 由 JavaScript *通过
+     ~WebAssembly.Memory~ 接口来创建*.
+
+     #+begin_src wat
+       (module
+         ;; 导入 JavaScript 的方法或对象供 WebAssembly 使用.
+         ;; 导入 console.log 方法, 起名为 $log
+         (import "console" "log" (func $log (param i32 i32)))
+         ;; 导入由 JavaScript 创建的内存, 并且指定了内存至少为 1 页(64KB)
+         ;; 导入的函数签名会被 WebAssembly 进行静态检查
+         (import "js" "mem" (memory 1))
+         ;; 使用 data 指令把数据写入到内存中
+         ;; "(i32 const 0)" 用于指定在线性内存中放置数据的偏移量, 0 表示起始位置
+         (data (i32.const 0) "Hi WASM,")
+         ;; 把另一个字符串存入内存中, 偏移量为 8 (因为第一个字符串长度为 8, 起始为 0)
+         ;; 避免冲突, 防止覆盖字符串
+         (data (i32.const 8) "I'm Coming")
+         ;; 导出 writeHi 函数给 JavaScript 调用
+         (func (export "writeHi")
+           i32.const 0
+           i32.const 18
+           ;; 调用了由 JavaScript 导入的 $log 函数
+           call $log
+         )
+       )
+     #+end_src
+
+     以上代码一共包含三种主要的节点: *import*, *data* 与 *func*.
+
+     重写 main.js
+     #+begin_src js
+       // 分配指定的 1 页内存
+       var memory = new WebAssembly.Memory({ initial: 1 });
+
+       function consoleLogString(offset, length) {
+         // 对 wasm 内存中的字符串进行解码
+         var bytes = new Uint8Array(memory.buffer, offset, length);
+         var string = new TextDecoder('utf8').decode(bytes);
+         console.log(string);
+       }
+
+       // 用于导入到 wasm 中使用的 log 方法和内存.
+       // 与 wat 文本格式代码中的两个 import 节点相对应
+       var importObject = {
+         console: {
+           log: consoleLogString
+         },
+         js: {
+           mem: memory
+         }
+       }
+
+       // 通过该方法直接从底层进行流式源码编译和实例化模块, 这是加载 wasm 最有效、最优化的方法
+       WebAssembly.instantiateStreaming(
+         fetch('../out/main.wasm'), importObject
+       ).then(obj => {
+         obj.instance.exports.writeHi();
+       })
+     #+end_src
+
+     因 wasm 中的字符串只是 *原始的字节*, *只有通过解码才能在 js 中使用*.
+
+     通过 *WebAssembly.instantiateStreaming* 方法可直接从底层进行流式源码编译和
+     实例化模块, 是加载 wasm 最有效、最优化的方法.
+
+**** 表格与动态链接
+     表格和内存相似， 只不过表格是必须通过索引才能获取的可变大小的数组. 在日常开
+     发中, 经常需要动态调用一些函数. 而这些函数不能直接存储在内存中, 因为内存会
+     把存储的原始内容作为字节暴露出去. 如果函数存储在内存中, wasm 就可以任意查看
+     和修改原始函数地址, *这是极度不安全的行为*. 所以, *在表格中存储函数引用, 然
+     后返回表格的索引*, 通常为 i32 类型. 通过 *call_indirect* 指令可以调用索引值,
+     从而达到调用函数的目的.
+
+     多个 wasm 可以实现动态链接, 模块实例可以共享相同的内存和表格. 通过内存和表
+     格, 就可以实现 JavaScript 和 wasm 的基本互操作.
+     
+     shared0.wat:
+     #+begin_src wat
+       (module
+         (import "js" "memory" (memory 1))
+         ;; 导入由 JavaScript 定义的表格, 1 代表初始大小, 表示该表中将存储一个函数引用
+         ;; anyfunc 代表 "任意签名的函数"
+         (import "js" "table" (table 1 anyfunc))
+         (elem (i32.const 0) $shared0func)
+         (func $shared0func (result i32)
+           ;; 创建常数 0
+           i32.const 0
+           ;; 该指令从内存中获取存储到常数 0 位置的值, 获取回来的值会被放到栈顶(也就是该函数返回值)
+           i32.load)
+         )
+     #+end_src
+
+     shared1.wat:
+     #+begin_src wat
+       (module
+         (import "js" "memory" (memory 1))
+         (import "js" "table" (table 1 anyfunc))
+         ;; 创建函数类型, 用于在后续的表格引用调用时进行类型检查
+         (type $void_to_i32 (func (result i32)))
+         (func (export "doIt") (result i32)
+           ;; 以下操作指令将常量 42 存储到索引为 0 的内存中
+           i32.const 0
+           i32.const 42
+           i32.store
+           ;; 等价于从表格中获取索引为 0 的函数调用
+           ;; 该函数引用正是 shared0.wat 中所存储的 $shared0func
+           i32.const 0
+           call_indirect (type $void_to_i32)
+         )
+       )
+     #+end_src
