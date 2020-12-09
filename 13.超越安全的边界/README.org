@@ -1008,6 +1008,8 @@
      *S 表达式*, 供人类读写, 所以也称为 *wast*. 文本格式和二进制格式也可以通过工
      具相互转换.
 
+     详见 MDN: [[https://developer.mozilla.org/zh-CN/docs/WebAssembly/Understanding_the_text_format][理解 WebAssembly 文本格式]]
+
      #+begin_src wat
         (module
           (func $add (param $lhs i32) (param $rhs i32) (result i32)
@@ -1165,3 +1167,47 @@
          )
        )
      #+end_src
+
+*** 使用 Rust 开发 WebAssembly
+    手写 wat 文本格式开发 wasm 的效率显然不会很高. WebAssembly 设计之初也是作为
+    一种编译目标而存在的, 它可以作为很多编程语言的编译目标.
+
+    - C/C++: 可以通过 *EmScripten* 工具来编译到 wasm. EmScripten 是一个 LLVM 后
+      端工具, 可以将 LLVM 中间码编译到 asm.js. 所以, C/C++ 的编译流程是通过任何
+      一个 LLVM 前端工具(eg: Clang)生成 LLVM IR, 然后通过 EmScripten 生成
+      asm.js, 最后通过一个 WebAssembly 编译工具链 Binaryen 将 asm.js 生成 wasm
+      二进制格式. 其中 asm.js 是 JavaScript 的一个子集, 可以说它是 WebAssembly
+      的雏形. 在一些不支持 wasm 的浏览器中, 也可以使用 asm.js 来代替.
+    - Rust: 支持 wasm 的两种编译目标
+      + wasm32-unknown-unknown: 使用的是 LLVM WebAssembly Backend 和 lld 链接器
+      + wasm32-unknown-emscripten: 会继续使用 EmScripten, 和 C/C++ 类似
+
+    使用以下命令可以安装工具链:
+    #+begin_src sh
+      rustup target add wasm32-unknown-unknown --toolchain nightly
+    #+end_src
+    
+    通过 ~cargo install wasm-gc~ 安装 wasm-gc 工具进行优化大小, 不过随着 lld 链
+    接器的进一步完善, 增加了 *链接时优化(LTO)* 功能就不再需要使用 wasm-gc.
+    
+*** 打造 WebAssembly 开发生态
+    即使是使用 Rust 编写代码再编译为 wasm, 开发效率还是比较低. WebAssembly 标准
+    自定义了四种类型: 两种数字和两种浮点数. 在大多数情况下, 这四种类型完全不够用.
+    因此, Rust 官方大招了以 wasm-bindgen 为首的一系列工具, 旨在提升 Rust 开发
+    wasm 的体验. 这一系列工具重点包括:
+
+    - wasm-bindgen: 核心是促进 JavaScript 和 Rust 之间使用 wasm 进行通信. 它允许
+      开发者直接使用 Rust 的结构体、JavaScript 的类、字符串等类型, 而不仅仅是
+      wasm 支持的整数或浮点数. 开发者只需要专注于业务.
+    - wasm-pack: 一站式构建、发布 Rust 编译 wasm 到 npm 平台.
+    - cargo-generate: 直接生成 wasm-bindgen 和 wasm-pack 项目模板, 方便开发.
+
+    Rust 官方对 Rust 和 WebAssembly 的愿景: *希望可以更方便地使用 Rust 开发
+    wasm*, *并且不需要改变现有开发流程*.
+
+    wasm-bindgen 致力于为 JavaScript 生态和 Rust crate 生态系统建立共享的基础.
+    wasm-bindgen 通过内置的 *js-sys* 包提供了对所有全局 JavaScript API 的绑定,
+    只需通过 ~wasm_bindgen::js~ 即可调用. 同样, 通过内置的 *web-sys* 包提供了对
+    所有 Web API 的绑定, 方便开发者调用.
+
+    
